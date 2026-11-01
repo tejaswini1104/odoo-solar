@@ -5,8 +5,12 @@ import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
+import CameraScanner from '../components/CameraScanner';
+import { cameraScanSupported } from '../utils/cameraSupport';
+import { serialFromScan } from '../utils/scanText';
 import {
   LifeBuoy,
+  Camera,
   Plus,
   CheckCircle,
   FileText,
@@ -31,6 +35,7 @@ export default function ServiceTickets({ setActiveTab }) {
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState(null);
   const [picked, setPicked] = useState(null);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     const term = query.trim();
@@ -43,13 +48,15 @@ export default function ServiceTickets({ setActiveTab }) {
 
   const chooseEquipment = (customer, item) => {
     setPicked({ customer, item });
-    setFormData((prev) => ({ ...prev, customer_id: customer.id, equipment_serial: item.serial_number }));
+    // The panels have no serial numbers, so a claim on them is made through their bulk warranty
+    setFormData((prev) => ({ ...prev, customer_id: customer.id, equipment_serial: item.serial_number || '', warranty_id: item.warranty_id ?? null }));
   };
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
     customer_id: '',
     equipment_serial: '',
+    warranty_id: null,
     title: '',
     description: '',
     priority: 'Medium'
@@ -85,6 +92,7 @@ export default function ServiceTickets({ setActiveTab }) {
       setSubmitting(true);
       const created = await api.createTicket({
         ...formData,
+        equipment_serial: formData.equipment_serial || null,
         customer_id: parseInt(formData.customer_id)
       });
 
@@ -106,7 +114,7 @@ export default function ServiceTickets({ setActiveTab }) {
       setQuery('');
       setMatches(null);
       setPicked(null);
-      setFormData((prev) => ({ ...prev, equipment_serial: '', title: '', description: '' }));
+      setFormData((prev) => ({ ...prev, equipment_serial: '', warranty_id: null, title: '', description: '' }));
       loadData();
     } catch (err) {
       addToast(`Ticket creation failed: ${err.message}`, 'error');
@@ -115,7 +123,51 @@ export default function ServiceTickets({ setActiveTab }) {
     }
   };
 
-  const handleResolve = async (id) => {
+  // Dialog for choosing a technician by hand (tickets are normally assigned automatically)
+  const [step, setStep] = useState(null); // { kind: 'assign', ticket }
+  const [technicians, setTechnicians] = useState([]);
+  const [stepForm, setStepForm] = useState({ technician_id: '', needs_replacement: false, notes: '', serial: '' });
+
+  const openStep = async (kind, ticket) => {
+    setStepForm({ technician_id: ticket.technician_id || '', needs_replacement: false, notes: '', serial: '' });
+    setStep({ kind, ticket });
+    try {
+      if (kind === 'assign') setTechnicians(await api.getTicketTechnicians());
+    } catch (err) {
+      addToast(`Error: ${err.message}`, 'error');
+    }
+  };
+
+  const submitStep = async (e) => {
+    e.preventDefault();
+    const { kind, ticket } = step;
+    try {
+      setSubmitting(true);
+      if (kind === 'assign') {
+        await api.assignTicket(ticket.id, Number(stepForm.technician_id));
+        addToast(`Technician assigned to TCK-${String(ticket.id).padStart(4, '0')}. The customer has been told.`, 'success');
+      }
+      setStep(null);
+      loadData();
+    } catch (err) {
+      addToast(`Error: ${err.message}`, 'error', 6000);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleQuote = async (ticket, approved) => {
+    try {
+      await api.decideTicketQuote(ticket.id, approved);
+      addToast(approved ? 'Quotation approved. The repair can go ahead.' : 'Quotation rejected. The ticket is closed with no charge.', approved ? 'success' : 'info');
+      loadData();
+    } catch (err) {
+      addToast(`Error: ${err.message}`, 'error');
+    }
+  };
+
+  const handleResolve = async (ticket) => {
+    const id = ticket.id;
     try {
       await api.resolveTicket(id);
       addToast(`Ticket #${id} marked as Resolved!`, 'success');
@@ -167,6 +219,21 @@ export default function ServiceTickets({ setActiveTab }) {
           <span className="font-mono text-[11px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 mt-0.5 inline-block">
             {row.equipment_serial}
           </span>
+          {row.technician_name && (
+            <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1"><UserCheck className="w-3 h-3" /> {row.technician_name}</div>
+          )}
+          {row.needs_replacement !== null && row.needs_replacement !== undefined && (
+            <div className={`text-[11px] mt-0.5 font-semibold ${row.needs_replacement ? 'text-purple-700' : 'text-emerald-700'}`}>
+              Technician: {row.needs_replacement ? 'needs a replacement' : 'repairable on site'}
+              {row.inspection_notes && <span className="block font-normal text-slate-500 max-w-xs">{row.inspection_notes}</span>}
+            </div>
+          )}
+          {row.dispatch_serial && !row.replacement_serial && (
+            <div className="text-[11px] text-slate-500 mt-0.5">Dispatched <span className="font-mono font-semibold">{row.dispatch_serial}</span></div>
+          )}
+          {row.replacement_serial && (
+            <div className="text-[11px] text-slate-500 mt-0.5">Replaced by <span className="font-mono font-semibold">{row.replacement_serial}</span></div>
+          )}
         </div>
       )
     },
@@ -203,7 +270,9 @@ export default function ServiceTickets({ setActiveTab }) {
         <div className="text-xs space-y-1">
           <StatusBadge status={row.status} />
           <div>
-            {row.customer_confirmed ? (
+            {row.quote_status === 'Rejected' ? (
+              <span className="text-slate-500 font-medium text-[11px]">Quotation rejected, no charge</span>
+            ) : row.customer_confirmed ? (
               <span className="text-teal-700 font-semibold text-[11px] flex items-center gap-1">
                 <CheckCheck className="w-3.5 h-3.5 text-teal-600" /> Customer Confirmed
               </span>
@@ -222,17 +291,41 @@ export default function ServiceTickets({ setActiveTab }) {
       render: (row) => (
         <div className="flex flex-wrap items-center gap-1.5">
           {!canManage && <span className="text-xs text-slate-400">Handled by Support</span>}
-          {canManage && (row.status === 'Open' || row.status === 'In Progress' || row.status === 'Assigned') ? (
+          {canManage && (row.status === 'Open' || row.status === 'Assigned') && (
             <button
-              onClick={() => handleResolve(row.id)}
-              className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-600 text-slate-950 transition"
-              title="Mark ticket resolved"
+              onClick={() => openStep('assign', row)}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-700 text-white transition"
             >
-              Resolve
+              {row.status === 'Open' ? 'Assign technician' : 'Reassign'}
+            </button>
+          )}
+          {canManage && row.status === 'Assigned' && (
+            <span className="text-[11px] text-slate-500">Waiting for the technician's report</span>
+          )}
+          {canManage && row.status === 'Quotation Sent' && (
+            <>
+              <button onClick={() => handleQuote(row, true)} className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white transition">
+                Customer approved
+              </button>
+              <button onClick={() => handleQuote(row, false)} className="px-2.5 py-1 text-xs font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition">
+                Customer rejected
+              </button>
+            </>
+          )}
+          {canManage && row.status === 'Awaiting Dispatch' && (
+            <span className="text-[11px] text-slate-500">Waiting for the warehouse to dispatch the replacement</span>
+          )}
+          {canManage && (row.status === 'In Progress' || row.status === 'Dispatched') ? (
+            <button
+              onClick={() => handleResolve(row)}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-600 text-slate-950 transition"
+              title={row.status === 'Dispatched' ? 'The technician has fitted the replacement' : 'Mark ticket resolved'}
+            >
+              {row.status === 'Dispatched' ? 'Fitted, resolve' : 'Resolve'}
             </button>
           ) : null}
 
-          {canManage && !row.customer_confirmed && row.status !== 'Closed' ? (
+          {canManage && row.status === 'Resolved' && !row.customer_confirmed ? (
             <button
               onClick={() => handleCustomerConfirm(row.id)}
               className="px-2.5 py-1 text-xs font-semibold rounded border border-teal-300 text-teal-800 hover:bg-teal-50 transition"
@@ -271,10 +364,10 @@ export default function ServiceTickets({ setActiveTab }) {
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-950 flex items-start gap-3">
         <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
         <div>
-          <strong>AUTOMATED WARRANTY LOOKUP & COVERED/BILLABLE DECISION:</strong> When a service ticket is created
-          with an equipment serial number, the system automatically checks its active warranty. If warranty is Active,
-          the visit is <strong>COVERED (₹0)</strong>. If Expired, it is <strong>BILLABLE</strong> and automatically
-          spawns an editable draft invoice. <em>Tickets cannot be Closed without prior customer confirmation!</em>
+          <strong>REPAIR FLOW:</strong> warranty check (<strong>COVERED</strong> ₹0 or <strong>BILLABLE</strong>) →
+          technician assigned automatically → technician visits and reports repair or replace → for billable tickets, quotation the customer approves or rejects →
+          the warehouse dispatches the replacement unit if one is needed → technician fits it, ticket resolved → customer confirms → closed.
+          Billable tickets are invoiced only after the customer approved the quotation and the work is done.
         </div>
       </div>
 
@@ -299,6 +392,42 @@ export default function ServiceTickets({ setActiveTab }) {
         searchPlaceholder="Search tickets by title, customer, or serial..."
       />
 
+      {/* Assign / site visit / dispatch */}
+      <Modal
+        isOpen={!!step}
+        onClose={() => setStep(null)}
+        title="Assign a technician"
+      >
+        {step && (
+          <form onSubmit={submitStep} className="space-y-4 text-sm">
+            <p className="text-xs text-slate-500">
+              TCK-{String(step.ticket.id).padStart(4, '0')} · {step.ticket.customer_name} · {step.ticket.equipment_serial}
+            </p>
+
+            {step.kind === 'assign' && (
+              <select
+                required
+                value={stepForm.technician_id}
+                onChange={(e) => setStepForm({ ...stepForm, technician_id: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              >
+                <option value="">Choose a technician</option>
+                {technicians.map((t) => <option key={t.id} value={t.id}>{t.name}{t.phone ? ` · ${t.phone}` : ''}</option>)}
+              </select>
+            )}
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
+              <button type="button" onClick={() => setStep(null)} className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                Cancel
+              </button>
+              <button type="submit" disabled={submitting} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold rounded-lg transition disabled:opacity-50">
+                Assign
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
       {/* Create Ticket Modal */}
       <Modal
         isOpen={isModalOpen}
@@ -308,13 +437,38 @@ export default function ServiceTickets({ setActiveTab }) {
         <form onSubmit={handleCreate} className="space-y-4 text-sm">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Find the customer or the unit *</label>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setPicked(null); setFormData((prev) => ({ ...prev, equipment_serial: '' })); }}
-              placeholder="Phone number, name, address or serial number"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
-            />
+            <div className="flex gap-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => { setQuery(serialFromScan(e.target.value)); setPicked(null); setFormData((prev) => ({ ...prev, equipment_serial: '', warranty_id: null })); }}
+                placeholder="Phone number, name, address or serial number"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              />
+              {cameraScanSupported() && (
+                <button
+                  type="button"
+                  onClick={() => setScanning(!scanning)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  title="Scan the QR label on the unit"
+                >
+                  <Camera className="w-4 h-4" /> Scan
+                </button>
+              )}
+            </div>
+            {scanning && (
+              <div className="mt-2">
+                <CameraScanner
+                  onScan={(raw) => {
+                    setQuery(serialFromScan(raw));
+                    setPicked(null);
+                    setFormData((prev) => ({ ...prev, equipment_serial: '', warranty_id: null }));
+                    setScanning(false);
+                  }}
+                  onClose={() => setScanning(false)}
+                />
+              </div>
+            )}
 
             {picked && (
               <div className="mt-2 p-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs">
@@ -336,13 +490,13 @@ export default function ServiceTickets({ setActiveTab }) {
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       {c.equipment.map((item) => (
                         <button
-                          key={item.serial_number}
+                          key={item.serial_number || `panels-${item.warranty_id}`}
                           type="button"
                           onClick={() => chooseEquipment(c, item)}
                           className="text-left px-2 py-1 rounded border border-slate-300 hover:border-amber-500 hover:bg-amber-50"
                         >
                           <span className="block text-[11px] font-semibold text-slate-800">{item.product_name}</span>
-                          <span className="block font-mono text-[11px] text-slate-600">{item.serial_number}</span>
+                          <span className="block font-mono text-[11px] text-slate-600">{item.serial_number || 'Solar panels (no serial numbers)'}</span>
                           <span className={`block text-[10px] font-semibold ${item.under_warranty ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {item.under_warranty ? `Warranty to ${item.warranty_end}` : 'No warranty'}
                           </span>
@@ -405,7 +559,7 @@ export default function ServiceTickets({ setActiveTab }) {
             </button>
             <button
               type="submit"
-              disabled={submitting || !formData.equipment_serial}
+              disabled={submitting || !(formData.equipment_serial || formData.warranty_id)}
               className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold rounded-lg transition disabled:opacity-50"
             >
               {submitting ? 'Checking Warranty...' : 'Submit Ticket & Check Warranty'}

@@ -46,6 +46,8 @@ def search_customers(q: str, db: Session = Depends(get_db)):
             .all()
         )
         for serial in serials:
+            if serial.status == "Replaced":
+                continue  # swapped out in a repair; its replacement is listed instead
             warranty = (
                 db.query(Warranty).filter(Warranty.serial_number == serial.serial_number)
                 .order_by(Warranty.created_at.desc()).first()
@@ -57,6 +59,17 @@ def search_customers(q: str, db: Session = Depends(get_db)):
                 "status": serial.status,
                 "warranty_end": warranty.end_date if warranty else None,
                 "under_warranty": bool(warranty and warranty.start_date <= today <= warranty.end_date),
+            })
+        # The panels have no serial numbers, so each order's panels are claimed through their bulk warranty
+        for panel in db.query(Warranty).filter(Warranty.customer_id == customer.id, Warranty.warranty_type == "bulk").all():
+            equipment.append({
+                "serial_number": None,
+                "warranty_id": panel.id,
+                "product_name": f"{panel.product.name} (order SO-{panel.order_id:04d})",
+                "category": panel.product.category,
+                "status": "Installed",
+                "warranty_end": panel.end_date,
+                "under_warranty": panel.start_date <= today <= panel.end_date,
             })
         result.append({
             "id": customer.id, "name": customer.name, "phone": customer.phone,

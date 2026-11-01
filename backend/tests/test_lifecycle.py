@@ -65,6 +65,21 @@ def confirmed_order(api, ids, db):
     return order["id"], quote
 
 
+def prepare_ticket(api, db, ticket, replacement=None):
+    """Take a ticket through the steps before resolving: technician, site visit, quotation if billable, dispatch."""
+    from backend.app.models.models import Technician
+    tid = ticket["id"]
+    tech = db.query(Technician).first()
+    assert api["support"].post(f"/api/tickets/{tid}/assign", json={"technician_id": tech.id}).status_code == 200
+    visit = api["technician"].post(f"/api/repair-visits/{tid}/report", json={"needs_replacement": bool(replacement), "notes": "Checked on site"})
+    assert visit.status_code == 200, visit.text
+    if ticket["service_type"] == "BILLABLE":
+        assert api["support"].post(f"/api/tickets/{tid}/quote", json={"approved": True}).status_code == 200
+    if replacement:
+        sent = api["warehouse"].post(f"/api/dispatch/replacements/{tid}/send", json={"serial_number": replacement})
+        assert sent.status_code == 200, sent.text
+
+
 def dispatch_and_deliver(api, order_id):
     pick = api["warehouse"].get(f"/api/dispatch/{order_id}/pick-list").json()
     names = {line["product_name"] for line in pick["lines"]}
@@ -167,6 +182,8 @@ def test_repair_ticket_free_under_warranty_and_auto_priced_after(api, ids, db):
     ticket_id = covered.json()["id"]
     assert api["support"].post(f"/api/tickets/{ticket_id}/close").status_code == 400
     assert api["support"].post(f"/api/tickets/{ticket_id}/customer-confirm").status_code == 400, "Not resolved yet"
+    assert api["support"].post(f"/api/tickets/{ticket_id}/resolve").status_code == 400, "No technician or site visit yet"
+    prepare_ticket(api, db, covered.json())
     assert api["support"].post(f"/api/tickets/{ticket_id}/resolve").status_code == 200
     assert api["support"].post(f"/api/tickets/{ticket_id}/customer-confirm").status_code == 200
     assert api["support"].post(f"/api/tickets/{ticket_id}/close").json()["status"] == "Closed"

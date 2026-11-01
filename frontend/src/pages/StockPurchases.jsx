@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { localIsoDate } from '../utils/dates';
+import SerialLabels from '../components/SerialLabels';
 
 const rupees = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const todayIso = () => localIsoDate();
@@ -152,6 +153,10 @@ export default function StockPurchases() {
       </div>
 
       <DataTable columns={columns} data={purchases} searchPlaceholder="Search by supplier or product..." emptyTitle="No purchases recorded yet" emptyDescription="Stock you receive from suppliers appears here." />
+
+      <div className="pt-4 border-t border-slate-200">
+        <SerialLabels />
+      </div>
 
       <Modal isOpen={open} onClose={() => { setOpen(false); reset(); }} title="Receive stock from a supplier" maxWidth="max-w-3xl">
         <form onSubmit={handleSubmit} className="space-y-4 text-sm">

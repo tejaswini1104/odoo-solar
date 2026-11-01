@@ -7,6 +7,7 @@ import { useToast } from '../components/Toast';
 import { Plus, Phone, Mail, MapPin, User } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import ScheduleSurveyModal from '../components/ScheduleSurveyModal';
+import StatusBadge from '../components/StatusBadge';
 
 export default function Customers() {
   const { user } = useAuth();
@@ -17,6 +18,8 @@ export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [scheduleFor, setScheduleFor] = useState(null);
+  // The newest survey of each customer, so the row shows where the survey stands instead of offering to book again
+  const [surveyByCustomer, setSurveyByCustomer] = useState({});
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -27,12 +30,20 @@ export default function Customers() {
     city: ''
   });
 
-  const fetchCustomers = async () => {
+  const fetchCustomers = async ({ silent } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
-      const data = await api.getCustomers();
+      const [data, surveys] = await Promise.all([
+        api.getCustomers(),
+        isSales ? api.getSurveys() : Promise.resolve([]),
+      ]);
       setCustomers(data);
+      const latest = {};
+      surveys.forEach((s) => {
+        if (!latest[s.customer_id] || s.id > latest[s.customer_id].id) latest[s.customer_id] = s;
+      });
+      setSurveyByCustomer(latest);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -120,14 +131,32 @@ export default function Customers() {
           {
             header: 'Action',
             accessor: 'id',
-            render: (row) => (
-              <button
-                onClick={() => setScheduleFor(row)}
-                className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
-              >
-                Schedule survey
-              </button>
-            )
+            render: (row) => {
+              const survey = surveyByCustomer[row.id];
+              // Booked, recorded or decided: show where it stands. Only a customer with no survey, or a rejected one, can book.
+              if (survey && survey.status !== 'Rejected') {
+                const detail = {
+                  Scheduled: `${new Date(survey.scheduled_date).toLocaleDateString('en-IN')} · ${survey.technician_name}`,
+                  Submitted: 'Waiting for your approval',
+                  Draft: 'Waiting for your approval',
+                  Approved: 'Ready for a quotation',
+                }[survey.status];
+                return (
+                  <div className="text-xs">
+                    <StatusBadge status={survey.status === 'Draft' ? 'Submitted' : survey.status} />
+                    <div className="text-[11px] text-slate-500 mt-1">Survey SURV-{String(survey.id).padStart(4, '0')}{detail ? ` · ${detail}` : ''}</div>
+                  </div>
+                );
+              }
+              return (
+                <button
+                  onClick={() => setScheduleFor(row)}
+                  className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
+                >
+                  {survey ? 'Schedule a new survey' : 'Schedule survey'}
+                </button>
+              );
+            }
           }
         ]
       : [])
@@ -153,7 +182,7 @@ export default function Customers() {
         )}
       </div>
 
-      <ScheduleSurveyModal customer={scheduleFor} onClose={() => setScheduleFor(null)} />
+      <ScheduleSurveyModal customer={scheduleFor} onClose={() => setScheduleFor(null)} onScheduled={() => fetchCustomers({ silent: true })} />
 
       <DataTable
         columns={columns}

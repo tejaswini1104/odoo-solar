@@ -1,11 +1,12 @@
 from datetime import date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from backend.app.api.deps import get_current_user
 from backend.app.core.csv_export import csv_response
 from backend.app.core.database import get_db
-from backend.app.models.models import Product, StockPurchase, User
+from backend.app.core.qr import qr_png, warranty_url
+from backend.app.models.models import EquipmentSerial, Product, StockPurchase, User
 from backend.app.services.stock_service import PurchaseIn, StockService
 
 # Access by role is set where this router is included (api_router.py).
@@ -41,6 +42,28 @@ def purchasable_products(db: Session = Depends(get_db)) -> List[dict]:
         {"id": p.id, "name": p.name, "category": p.category, "unit": p.unit, "is_serialized": p.is_serialized, "cost_price": p.cost_price}
         for p in db.query(Product).order_by(Product.category, Product.name).all()
     ]
+
+
+@router.get("/serials")
+def list_serials(status: str = Query("In Stock", max_length=50), db: Session = Depends(get_db)) -> List[dict]:
+    """Serial-numbered units, newest first, for printing QR labels. Use status=all for every unit."""
+    query = db.query(EquipmentSerial).join(Product)
+    if status.lower() != "all":
+        query = query.filter(EquipmentSerial.status == status)
+    units = query.order_by(EquipmentSerial.id.desc()).limit(500).all()
+    return [
+        {"serial_number": u.serial_number, "product_name": u.product.name, "category": u.product.category, "status": u.status}
+        for u in units
+    ]
+
+
+@router.get("/qr.png")
+def serial_qr(serial: str = Query(min_length=3, max_length=100), db: Session = Depends(get_db)):
+    """The QR label image for one unit. Scanning it opens the warranty check and carries the serial number."""
+    serial = serial.strip()
+    if not db.query(EquipmentSerial).filter(EquipmentSerial.serial_number == serial).first():
+        raise HTTPException(status_code=404, detail="No unit with that serial number.")
+    return Response(content=qr_png(serial), media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/purchases")

@@ -3,6 +3,7 @@ from typing import List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from backend.app.core.clock import business_date, utc_bounds
+from backend.app.core.config import settings
 from backend.app.models.models import EquipmentSerial, SalesOrder, StockPurchaseItem
 from backend.app.services.order_service import VERIFIED_STATUSES
 
@@ -60,7 +61,7 @@ def order_rows(db: Session, start: Optional[date] = None, end: Optional[date] = 
         if high and (finished is None or finished > high):
             continue
 
-        revenue = round(order.quotation.subtotal, 2) if order.quotation else round(order.total_amount / 1.18, 2)
+        revenue = round(order.quotation.subtotal, 2) if order.quotation else round(order.total_amount / (1 + settings.GST_PERCENT / 100), 2)
 
         material_cost = 0.0
         for serial in db.query(EquipmentSerial).filter(EquipmentSerial.order_id == order.id).all():

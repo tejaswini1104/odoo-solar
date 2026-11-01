@@ -1,13 +1,14 @@
 from datetime import datetime
 from backend.app.core.clock import business_today
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
-from backend.app.models.models import SalesOrder, EquipmentSerial, InventoryItem
+from backend.app.models.models import SalesOrder, EquipmentSerial, InventoryItem, ServiceTicket
 from backend.app.services.notification_service import notify
-from backend.app.schemas.schemas import DispatchSerialsRequest, SalesOrderResponse, EquipmentSerialResponse
+from backend.app.schemas.schemas import DispatchSerialsRequest, SalesOrderResponse, EquipmentSerialResponse, TicketDispatchRequest
 from backend.app.services.dispatch_service import DispatchService
+from backend.app.services.ticket_service import TicketService
 from backend.app.services.warranty_service import WarrantyService
 from backend.app.api.endpoints.orders import _format_order
 
@@ -116,3 +117,50 @@ def mark_delivered(id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(order)
     return _format_order(order)
+
+
+# ----------------- Replacement units for repair tickets -----------------
+def _replacement_request(t: ServiceTicket, db: Session) -> dict:
+    serials, product_name = [], None
+    if t.warranty_id is None:
+        old = db.query(EquipmentSerial).filter(EquipmentSerial.serial_number == t.equipment_serial).first()
+        if old:
+            product_name = old.product.name
+            serials = [
+                r.serial_number for r in db.query(EquipmentSerial).filter(
+                    EquipmentSerial.product_id == old.product_id, EquipmentSerial.status == "In Stock"
+                ).order_by(EquipmentSerial.serial_number).all()
+            ]
+    return {
+        "ticket_id": t.id,
+        "reference": f"TCK-{t.id:04d}",
+        "status": t.status,
+        "customer_name": t.customer.name,
+        "delivery_address": f"{t.customer.address}, {t.customer.city}",
+        "faulty_serial": None if t.warranty_id is not None else t.equipment_serial,
+        "is_panel": t.warranty_id is not None,
+        "product_name": product_name,
+        "available_serials": serials,
+        "technician_name": t.technician.name if t.technician else None,
+        "dispatch_serial": t.dispatch_serial,
+        "dispatched_at": t.dispatched_at,
+    }
+
+
+@router.get("/replacements/list")
+def replacement_requests(db: Session = Depends(get_db)):
+    """Repair tickets waiting for the warehouse to send a replacement, and the ones already sent."""
+    tickets = (
+        db.query(ServiceTicket)
+        .filter(ServiceTicket.status.in_(["Awaiting Dispatch", "Dispatched"]))
+        .order_by(ServiceTicket.created_at)
+        .all()
+    )
+    return [_replacement_request(t, db) for t in tickets]
+
+
+@router.post("/replacements/{ticket_id}/send")
+def send_replacement(ticket_id: int, payload: Optional[TicketDispatchRequest] = None, db: Session = Depends(get_db)):
+    """Send the replacement for a repair ticket: pick the in-stock serial (panels have none)."""
+    ticket = TicketService.dispatch_replacement(db, ticket_id, payload.serial_number if payload else None)
+    return _replacement_request(ticket, db)

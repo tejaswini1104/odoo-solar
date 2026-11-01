@@ -3,7 +3,7 @@
 export const TABS_BY_ROLE = {
   admin: ['dashboard', 'leads', 'customers', 'surveys', 'packages', 'quotations', 'orders', 'dispatch', 'stock', 'installations', 'subsidies', 'warranties', 'tickets', 'invoices', 'profitability', 'payroll', 'users'],
   sales: ['leads', 'customers', 'surveys', 'packages', 'quotations', 'orders', 'installations', 'subsidies', 'warranties', 'tickets', 'invoices'],
-  technician: ['surveys', 'installations', 'packages'],
+  technician: ['surveys', 'installations', 'repairs', 'packages'],
   support: ['customers', 'subsidies', 'warranties', 'tickets', 'invoices', 'packages'],
   warehouse: ['dispatch', 'stock', 'packages'],
 };

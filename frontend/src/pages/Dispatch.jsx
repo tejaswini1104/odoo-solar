@@ -7,7 +7,9 @@ import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { Truck, CheckCircle2, QrCode, Camera, X, ClipboardList } from 'lucide-react';
 import CameraScanner from '../components/CameraScanner';
+import ReplacementDispatch from '../components/ReplacementDispatch';
 import { cameraScanSupported } from '../utils/cameraSupport';
+import { serialFromScan } from '../utils/scanText';
 import { useAuth } from '../auth/AuthContext';
 
 export default function Dispatch({ setActiveTab }) {
@@ -66,7 +68,7 @@ export default function Dispatch({ setActiveTab }) {
 
   // One scan (handheld scanner, typed, or camera): put the serial in the right slot, or say why it cannot go there
   const acceptScan = useCallback((raw) => {
-    const code = (raw || '').trim();
+    const code = serialFromScan(raw).trim();
     if (!code || !dispatchReqs) return;
     const req = dispatchReqs.requirements.find((r) =>
       r.available_serials.some((sn) => sn.toLowerCase() === code.toLowerCase())
@@ -226,6 +228,8 @@ export default function Dispatch({ setActiveTab }) {
         data={orders}
         searchPlaceholder="Search orders to dispatch..."
       />
+
+      <ReplacementDispatch />
 
       {/* Stock Level Overview */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">

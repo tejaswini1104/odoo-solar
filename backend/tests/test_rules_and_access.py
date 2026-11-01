@@ -75,6 +75,26 @@ def test_converting_a_lead_reuses_the_existing_customer(api, ids, db):
     assert converted.status_code == 200 and converted.json()["id"] == ids["customer"]
 
 
+def test_converting_does_not_skip_the_first_call(api, ids, db):
+    lead = lead_for(db, ids["customer"])
+    lead.customer_id = None
+    db.commit()
+    assert api["sales"].post(f"/api/leads/{lead.id}/convert").status_code == 200
+    db.refresh(lead)
+    assert lead.customer_id == ids["customer"] and lead.lead_status == "New", "Converting must not mark an uncalled lead as done"
+    booked = api["sales"].post("/api/surveys/schedule", json={"customer_id": ids["customer"], "lead_id": lead.id, "scheduled_date": ids["tomorrow"]})
+    assert booked.status_code == 400 and "Call" in booked.json()["detail"]
+
+    # Once the call is recorded the lead can be converted and the survey booked
+    api["sales"].post(f"/api/leads/{lead.id}/status", json={"status": "Contacted", "shadow_free_area": 300, "grid_connection_ok": True})
+    lead.customer_id = None
+    db.commit()
+    api["sales"].post(f"/api/leads/{lead.id}/convert")
+    db.refresh(lead)
+    assert lead.lead_status == "Converted"
+    assert api["sales"].post("/api/surveys/schedule", json={"customer_id": ids["customer"], "lead_id": lead.id, "scheduled_date": ids["tomorrow"]}).status_code == 201
+
+
 def test_role_gates(api, ids):
     assert api["technician"].get("/api/reports/summary").status_code == 403
     assert api["sales"].get("/api/reports/summary").status_code == 403

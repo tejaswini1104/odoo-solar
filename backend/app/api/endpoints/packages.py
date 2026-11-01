@@ -1,6 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.models.models import SolarPackage, PackageComponent, Product
 from backend.app.schemas.schemas import SolarPackageResponse, BOMResponse, BOMItemResponse
@@ -45,7 +46,7 @@ def get_package_bom(id: int, db: Session = Depends(get_db)):
             )
         )
 
-    tax = round(subtotal * 0.18, 2)
+    tax = round(subtotal * settings.GST_PERCENT / 100, 2)
     total = round(subtotal + tax, 2)
 
     return BOMResponse(

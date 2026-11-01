@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from backend.app.core.validators import MAX_MONEY, SERIAL_PATTERN, clean_email, clean_phone, text_rule
 from typing import List, Optional
 from datetime import datetime, date
@@ -393,7 +393,10 @@ class InvoiceResponse(BaseModel):
 # ----------------- Service Ticket Schemas -----------------
 class ServiceTicketCreate(BaseModel):
     customer_id: int
-    equipment_serial: str = Field(min_length=3, max_length=100)
+    # A serial-numbered unit is identified by its serial. The solar panels have no serial numbers, so a claim on them
+    # names the bulk panel warranty instead.
+    equipment_serial: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    warranty_id: Optional[int] = None
     title: str = Field(max_length=255)
     description: str = Field(max_length=2000)
     priority: str = Field(default="Medium", pattern="^(Low|Medium|High|Urgent)$")
@@ -402,16 +405,49 @@ class ServiceTicketCreate(BaseModel):
     _title = field_validator("title")(text_rule("Title", 3, 255))
     _description = field_validator("description")(text_rule("Description", 5, 2000))
 
+    @model_validator(mode="after")
+    def _one_identifier(self):
+        if bool(self.equipment_serial) == (self.warranty_id is not None):
+            raise ValueError("Give either the equipment serial number or the panel warranty, not both and not neither.")
+        return self
+
+
+class TicketAssignRequest(BaseModel):
+    technician_id: int
+
+
+class TicketInspectRequest(BaseModel):
+    needs_replacement: bool
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+
+class TicketQuoteDecision(BaseModel):
+    approved: bool
+
+
+class TicketDispatchRequest(BaseModel):
+    serial_number: Optional[str] = Field(default=None, min_length=3, max_length=100)
+
+    _serial = field_validator("serial_number")(text_rule("Serial number", 3, 100))
+
 class ServiceTicketResponse(BaseModel):
     id: int
     customer_id: int
     customer_name: Optional[str] = None
     equipment_serial: str
     installation_id: Optional[int] = None
+    warranty_id: Optional[int] = None
+    replacement_serial: Optional[str] = None
+    technician_id: Optional[int] = None
+    technician_name: Optional[str] = None
+    inspection_notes: Optional[str] = None
+    needs_replacement: Optional[bool] = None
+    quote_status: Optional[str] = None
+    dispatch_serial: Optional[str] = None
     title: str
     description: str
     priority: str
-    status: str # Open, Assigned, In Progress, Resolved, Customer Confirmed, Closed
+    status: str # Open, Assigned, Quotation Sent, In Progress, Dispatched, Resolved, Customer Confirmed, Closed
     service_type: str # COVERED, BILLABLE
     customer_charge: float
     customer_confirmed: bool

@@ -148,11 +148,18 @@ The seed dataset demonstrates the entire Phase 1 lifecycle:
 - **Warranty clock starts at delivery** (`POST /api/dispatch/{id}/delivered`) for every serial number (2 years) and the panels (20 years). Completing the installation only fills in anything still missing.
 - **Barcode and serial scanning at dispatch**: a handheld scanner or typed serials (Enter), or the phone camera where the browser supports `BarcodeDetector`. Nothing is pre-filled. Each scan is checked against in-stock units for the order, and dispatch stays disabled until every unit is scanned.
 - **Warehouse pick list** for every physical part (panels, cables, stands and serial-numbered units). Installation is a service and is never packed or counted as stock.
-- **Repair invoices are priced automatically**: the faulty part's list price plus `SERVICE_LABOUR_CHARGE` (config), plus GST. Support can still edit the lines. A ticket needs a delivered serial number that belongs to the customer.
+- **Repair invoices are priced automatically**: the faulty part's list price plus `SERVICE_LABOUR_CHARGE` (config), plus GST. Support can still edit the draft lines until the repair is done. A ticket needs a serial number that has been delivered and belongs to the customer.
+- **Repair invoices are sent automatically**: marking a billable ticket *Resolved* sends its draft invoice to the customer and alerts them. Sent invoices can no longer be edited.
+- **Solar panel claims**: panels have no serial numbers, so a claim on the 20-year panel warranty is raised against the bulk panel warranty of the order (priced from one panel plus labour once the cover has ended).
+- **Replacement units**: when a serial-numbered unit is swapped, Support enter the new unit's serial number on *Resolve*. The new unit must be the same product and in stock. Stock goes down by one, the faulty unit is marked *Replaced*, and the new unit gets a warranty: the remaining cover when the repair was free, or a full new warranty when the customer paid.
+- **GST** comes from one setting (`GST_PERCENT` in `backend/app/core/config.py`) for quotations, invoices, the catalogue and profit.
+- **Quotations are drafted automatically**: when Sales approve a survey, a draft quotation is created from the package the survey recommends, with the full parts list and GST. Sales review it and send it; the customer sees nothing until then. If no single package matches, Sales are alerted to choose one by hand.
+- **A quotation must use the customer's own survey.** A survey belonging to another customer is refused.
 - **Find the customer in seconds**: ticket creation searches by phone, name, address or serial number and lists the customer's equipment with warranty status.
 - **Alerts** (the bell in the top bar, staff and portal): new enquiries and reported payments to Sales, orders to pack to the warehouse, new jobs and survey visits to the technician, new tickets to Support, and progress updates to the customer.
 - **Order cancellation** before dispatch releases reserved stock, removes the installation job, closes the subsidy file and tells Sales how much to refund.
 - **Profit uses real costs**: material is priced at the average paid in recorded stock purchases (list cost price for anything never purchased). Each job also shows what the customer has paid and the balance due.
+- **QR labels for every serial number**: Warehouse open *Stock & Purchases*, choose the units and *Print labels*. Each QR code holds the warranty check address with the serial in it (`PUBLIC_BASE_URL` in `backend/app/core/config.py`, set it to an address people can reach before printing). Scanning a label fills the serial at dispatch, finds the customer and unit in Support's ticket search, and a phone camera that scans it opens a public warranty check at `/check` (product and warranty dates only, never the owner). The camera scanner uses the browser's detector where there is one and jsQR elsewhere; browsers only allow the camera on `localhost` or over HTTPS.
 - **Printable invoices and quotations** (staff and portal): *PDF* opens a clean page; choose "Save as PDF" in the print dialog.
 - **Director's view**: today, this week, this month or a custom range, unfinished work with what each item is waiting for, profit per job, technician pay, stock spend, subsidy files and CSV exports.
 - Duplicate customers (same phone or email) are refused, and converting a lead reuses an existing customer.
@@ -181,7 +188,7 @@ so a role that is not allowed to do something is refused even if it calls the AP
 | **Warehouse** | Dispatch: assigning serial numbers and sending an order out. |
 | **Customer** | The portal: packages, enquiries, quotations, payments, invoices, warranties and support tickets, for their own account only. |
 
-Who may approve a site survey is still undecided. For now, anyone who can edit surveys (Sales and Technician) can approve.
+Technicians measure a site and Sales approve or reject the survey, so nobody approves their own measurements. A survey can be decided once, after the technician has recorded it; an approved or rejected survey cannot be changed.
 
 ### Demo logins (created by `python backend/seed.py`)
 
@@ -210,7 +217,7 @@ python backend/create_staff.py --name "Asha Rao" --email asha@yourcompany.com --
 
 A fresh `python backend/seed.py` creates everything (and wipes the `public` schema first). An existing database
 keeps its data: run `python backend/apply_migrations.py`, which creates new tables and applies the SQL files in
-`backend/migrations/` (`001` to `007`). It is safe to run more than once.
+`backend/migrations/` (`001` to `008`). It is safe to run more than once.
 
 ### Automated tests
 

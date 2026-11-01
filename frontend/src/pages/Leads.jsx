@@ -225,15 +225,25 @@ export default function Leads({ onCustomerCreated }) {
       render: (row) => (
         <div>
           {row.lead_status !== 'Converted' && !isSales ? (
-            <span className="text-xs text-slate-500 font-medium">Sales converts leads</span>
+            <span className="text-xs text-slate-500 font-medium">
+              {row.customer_id ? `Customer #${row.customer_id}` : 'Sales converts leads'}
+            </span>
           ) : row.lead_status !== 'Converted' ? (
             <div className="flex flex-col items-start gap-1.5">
-              <button
-                onClick={() => handleConvert(row.id)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition"
-              >
-                <UserPlus className="w-3.5 h-3.5" /> Convert to Customer
-              </button>
+              {/* Only a lead with no customer yet can be converted. One that already has a customer, or a booked survey, shows where it stands. */}
+              {!row.customer_id && row.lead_status !== 'Lost' && (
+                <button
+                  onClick={() => handleConvert(row.id)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition"
+                >
+                  <UserPlus className="w-3.5 h-3.5" /> Convert to Customer
+                </button>
+              )}
+              {row.customer_id && (
+                <span className="text-xs font-medium text-emerald-600">
+                  Customer #{row.customer_id}{row.lead_status === 'Survey Scheduled' ? ' · survey booked' : ''}
+                </span>
+              )}
               <div className="flex gap-1.5">
                 {['New', 'Contacted'].includes(row.lead_status) && (
                   <button
@@ -243,7 +253,7 @@ export default function Leads({ onCustomerCreated }) {
                     {row.lead_status === 'New' ? 'Record first call' : 'Update call'}
                   </button>
                 )}
-                {row.lead_status !== 'Lost' && (
+                {row.lead_status !== 'Lost' && row.lead_status !== 'Survey Scheduled' && (
                   <button
                     onClick={() => handleStatus(row.id, 'Lost')}
                     className="px-2 py-0.5 text-[11px] font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition"

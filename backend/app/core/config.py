@@ -15,6 +15,10 @@ class Settings(BaseSettings):
         "Solar Panels": 240,      # 20 years (bulk warranty per order)
     }
 
+    # Where the web app is served. The QR code on each unit opens the warranty check page under this address.
+    # Set it to the address people can reach (for example the laptop's address on the local network) before printing labels.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:5173")
+
     # Advance required before installation, as a percentage of the quotation total including GST
     ADVANCE_PERCENT: float = 30.0
 

@@ -3,15 +3,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from backend.app.api.deps import require_customer
 from backend.app.core.database import get_db
+from backend.app.core.config import settings
 from backend.app.core.roles import SALES
 from backend.app.services.notification_service import notify
 from backend.app.models.models import Customer, Lead, SolarPackage, User
 from backend.app.schemas.portal_schemas import CatalogPackage, EnquiryCreate, EnquiryResponse
 
 router = APIRouter(prefix="/portal", tags=["Customer Portal"])
-
-GST_RATE = 0.18
-
 
 def _enquiry_out(lead: Lead) -> EnquiryResponse:
     return EnquiryResponse(
@@ -41,7 +39,7 @@ def list_packages_for_customers(db: Session = Depends(get_db)):
             capacity_kw=pkg.capacity_kw,
             system_type=pkg.system_type,
             description=pkg.description,
-            price_incl_gst=round(subtotal * (1 + GST_RATE), 2),
+            price_incl_gst=round(subtotal * (1 + settings.GST_PERCENT / 100), 2),
         ))
     return result
 

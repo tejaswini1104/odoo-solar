@@ -7,6 +7,7 @@ from backend.app.core.roles import SALES, TECHNICIAN
 from backend.app.models.models import SiteSurvey, Technician, User
 from backend.app.schemas.schemas import SiteSurveyCreate, SiteSurveyResponse, TechnicianResponse
 from backend.app.schemas.survey_schemas import SurveyCompleteRequest, SurveyReassignRequest, SurveyScheduleRequest
+from backend.app.services.quotation_service import QuotationService
 from backend.app.services.survey_service import SurveyService, is_measured
 
 # Access by role is set where this router is included (api_router.py).
@@ -79,29 +80,34 @@ def reassign_survey(
         raise HTTPException(status_code=404, detail="Site survey not found")
     return SurveyService.reassign(db, survey, payload.technician_id)
 
-# Who may approve or reject a survey is on hold for now: it follows the survey access rule for the router.
-@router.post("/surveys/{id}/approve", response_model=SiteSurveyResponse)
-def approve_survey(id: int, db: Session = Depends(get_db)):
-    survey = db.query(SiteSurvey).filter(SiteSurvey.id == id).first()
+def _survey_awaiting_decision(db: Session, survey_id: int) -> SiteSurvey:
+    """A survey can be approved or rejected once, after the technician has recorded it and before it is decided."""
+    survey = db.query(SiteSurvey).filter(SiteSurvey.id == survey_id).first()
     if not survey:
         raise HTTPException(status_code=404, detail="Site survey not found")
+    if survey.status in ("Approved", "Rejected"):
+        raise HTTPException(status_code=400, detail=f"This survey is already {survey.status.lower()}, so it cannot be decided again.")
     if survey.status == "Scheduled" or not is_measured(survey):
         raise HTTPException(
             status_code=400,
-            detail="The technician has not recorded this survey yet, so it cannot be approved.",
+            detail="The technician has not recorded this survey yet, so it cannot be approved or rejected.",
         )
+    return survey
 
+# Technicians measure, Sales decide. The person who took the measurements does not approve their own survey.
+@router.post("/surveys/{id}/approve", response_model=SiteSurveyResponse)
+def approve_survey(id: int, _user: User = Depends(require_roles(SALES)), db: Session = Depends(get_db)):
+    survey = _survey_awaiting_decision(db, id)
     survey.status = "Approved"
     db.commit()
+    # The quotation is drafted from the survey's recommendation. Sales review and send it.
+    QuotationService.auto_draft_for_survey(db, survey)
     db.refresh(survey)
     return survey
 
 @router.post("/surveys/{id}/reject", response_model=SiteSurveyResponse)
-def reject_survey(id: int, db: Session = Depends(get_db)):
-    survey = db.query(SiteSurvey).filter(SiteSurvey.id == id).first()
-    if not survey:
-        raise HTTPException(status_code=404, detail="Site survey not found")
-
+def reject_survey(id: int, _user: User = Depends(require_roles(SALES)), db: Session = Depends(get_db)):
+    survey = _survey_awaiting_decision(db, id)
     survey.status = "Rejected"
     db.commit()
     db.refresh(survey)

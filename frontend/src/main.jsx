@@ -18,6 +18,7 @@ import PortalInstallation from './portal/PortalInstallation.jsx'
 import PortalSubsidy from './portal/PortalSubsidy';
 import PortalWarranties from './portal/PortalWarranties.jsx'
 import PortalSupport from './portal/PortalSupport.jsx'
+import WarrantyCheck from './pages/WarrantyCheck.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 
 createRoot(document.getElementById('root')).render(
@@ -28,6 +29,8 @@ createRoot(document.getElementById('root')).render(
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            {/* Public: the page a phone opens after scanning the QR label on a unit */}
+            <Route path="/check" element={<WarrantyCheck />} />
             <Route path="/portal" element={<RequireCustomer><PortalLayout /></RequireCustomer>}>
               <Route index element={<Catalog />} />
               <Route path="enquire" element={<NewEnquiry />} />

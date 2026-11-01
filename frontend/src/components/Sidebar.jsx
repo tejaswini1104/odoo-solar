@@ -33,6 +33,7 @@ const navItems = [
   { id: 'dispatch', label: 'Dispatch & Serials', icon: Truck },
   { id: 'stock', label: 'Stock Purchases', icon: PackagePlus },
   { id: 'installations', label: 'Installations', icon: Wrench },
+  { id: 'repairs', label: 'Repair Visits', icon: LifeBuoy },
   { id: 'subsidies', label: 'Subsidies', icon: Landmark },
   { id: 'warranties', label: 'Warranties', icon: ShieldCheck },
   { id: 'tickets', label: 'Service Tickets', icon: LifeBuoy },

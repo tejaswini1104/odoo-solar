@@ -1,9 +1,52 @@
+from typing import Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from backend.app.models.models import Quotation, QuotationItem, SiteSurvey, SolarPackage, Customer
+from backend.app.core.config import settings
+from backend.app.core.roles import SALES
+from backend.app.services.notification_service import notify
 from backend.app.schemas.schemas import QuotationCreate
 
 class QuotationService:
+    @staticmethod
+    def auto_draft_for_survey(db: Session, survey: SiteSurvey) -> Optional[Quotation]:
+        """Once a survey is approved, draft the quotation from the package it recommends.
+
+        Sales only review the draft and send it. If no single package matches the recommendation, Sales are told to
+        pick one by hand. A draft is never sent to the customer automatically.
+        """
+        if survey.quotations or survey.customer_id is None or survey.recommended_capacity is None:
+            return None
+        matches = db.query(SolarPackage).filter(
+            SolarPackage.capacity_kw >= survey.recommended_capacity - 0.01,
+            SolarPackage.capacity_kw <= survey.recommended_capacity + 0.01,
+        ).all()
+        if survey.recommended_system_type:
+            matches = [p for p in matches if p.system_type == survey.recommended_system_type]
+        who = survey.customer.name if survey.customer else f"customer #{survey.customer_id}"
+        if len(matches) != 1:
+            notify(
+                db, f"Survey SURV-{survey.id:04d} approved: create the quotation",
+                f"No single package matches the recommended {survey.recommended_capacity:g} kW for {who}. Choose one by hand.",
+                link="quotations", role=SALES,
+            )
+            db.commit()
+            return None
+        try:
+            quotation = QuotationService.create_quotation(db, QuotationCreate(
+                customer_id=survey.customer_id, survey_id=survey.id, package_id=matches[0].id,
+            ))
+        except HTTPException:
+            db.rollback()
+            return None
+        notify(
+            db, f"Draft quotation QTN-{quotation.id:05d} is ready for {who}",
+            f"{matches[0].name}, total ₹{quotation.total:,.0f}. Review it and send it to the customer.",
+            link="quotations", role=SALES,
+        )
+        db.commit()
+        return quotation
+
     @staticmethod
     def create_quotation(db: Session, quotation_in: QuotationCreate) -> Quotation:
         # 1. HARD GATE: Survey check
@@ -27,6 +70,13 @@ class QuotationService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Customer with ID {quotation_in.customer_id} not found."
+            )
+
+        # The survey must be the one done at this customer's own site
+        if survey.customer_id != customer.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Quotation cannot be created: site survey #{survey.id} belongs to a different customer."
             )
 
         # 3. Package check & auto BOM generation
@@ -89,8 +139,7 @@ class QuotationService:
             )
             db.add(q_item)
 
-        # 18% GST standard on solar installations
-        tax = round(subtotal * 0.18, 2)
+        tax = round(subtotal * settings.GST_PERCENT / 100, 2)
         total = round(subtotal + tax, 2)
 
         quotation.subtotal = subtotal

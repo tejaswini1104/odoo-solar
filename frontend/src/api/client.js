@@ -121,6 +121,17 @@ export const api = {
   getTickets: () => request('/tickets'),
   getTicket: (id) => request(`/tickets/${id}`),
   createTicket: (data) => request('/tickets', { method: 'POST', body: data }),
+  getTicketTechnicians: () => request('/tickets/technicians'),
+  assignTicket: (id, technicianId) => request(`/tickets/${id}/assign`, { method: 'POST', body: { technician_id: technicianId } }),
+  // The technician's own repair visits and their finding at the site
+  getMyRepairVisits: () => request('/repair-visits'),
+  reportRepairVisit: (id, needsReplacement, notes) =>
+    request(`/repair-visits/${id}/report`, { method: 'POST', body: { needs_replacement: needsReplacement, notes: notes || null } }),
+  decideTicketQuote: (id, approved) => request(`/tickets/${id}/quote`, { method: 'POST', body: { approved } }),
+  // Replacement units for repair tickets are sent by the warehouse
+  getReplacementRequests: () => request('/dispatch/replacements/list'),
+  sendReplacement: (ticketId, serialNumber) =>
+    request(`/dispatch/replacements/${ticketId}/send`, { method: 'POST', body: serialNumber ? { serial_number: serialNumber } : undefined }),
   resolveTicket: (id) => request(`/tickets/${id}/resolve`, { method: 'POST' }),
   customerConfirmTicket: (id) => request(`/tickets/${id}/customer-confirm`, { method: 'POST' }),
   closeTicket: (id) => request(`/tickets/${id}/close`, { method: 'POST' }),
@@ -163,6 +174,7 @@ export const api = {
 
   // Stock purchases (warehouse)
   getStockProducts: () => request('/stock/products'),
+  getStockSerials: (status = 'In Stock') => request(`/stock/serials?status=${encodeURIComponent(status)}`),
   getStockPurchases: () => request('/stock/purchases'),
   receiveStock: (data) => request('/stock/purchases', { method: 'POST', body: data }),
 
@@ -219,6 +231,7 @@ export const api = {
   getMyTickets: () => request('/portal/tickets'),
   raiseTicket: (data) => request('/portal/tickets', { method: 'POST', body: data }),
   confirmMyTicket: (id) => request(`/portal/tickets/${id}/confirm`, { method: 'POST' }),
+  decideMyTicketQuote: (id, approved) => request(`/portal/tickets/${id}/quote`, { method: 'POST', body: { approved } }),
   getMyInvoices: () => request('/portal/invoices'),
   payInvoice: (id, data) => request(`/portal/invoices/${id}/payments`, { method: 'POST', body: data }),
 

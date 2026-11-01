@@ -8,7 +8,7 @@ from backend.app.core.database import get_db
 from backend.app.models.models import Installation, Invoice, Payment, ServiceTicket, SubsidyApplication, User, Warranty
 from backend.app.schemas.after_sales_schemas import (
     InvoicePaymentSubmit, PortalInstallation, PortalInstallationPhoto, PortalInvoice, PortalInvoiceLine,
-    PortalTicket, PortalTicketCreate, PortalWarranty
+    PortalQuoteDecision, PortalTicket, PortalTicketCreate, PortalWarranty
 )
 from backend.app.schemas.billing_schemas import PortalPayment
 from backend.app.schemas.schemas import ServiceTicketCreate
@@ -41,7 +41,7 @@ def my_warranties(user: User = Depends(require_customer), db: Session = Depends(
             duration_months=w.duration_months,
             start_date=w.start_date,
             end_date=w.end_date,
-            status="Active" if active else "Expired",
+            status="Replaced" if w.status == "Replaced" else ("Active" if active else "Expired"),
             days_left=max((w.end_date - today).days, 0),
         ))
     return result
@@ -53,6 +53,15 @@ def _ticket_out(t: ServiceTicket) -> PortalTicket:
         id=t.id,
         reference=f"TCK-{t.id:04d}",
         equipment_serial=t.equipment_serial,
+        replacement_serial=t.replacement_serial,
+        technician_name=t.technician.name if t.technician else None,
+        needs_replacement=t.needs_replacement,
+        quote_status=t.quote_status,
+        # The draft invoice is internal, but while it is the quotation the customer sees its lines
+        quote_lines=[
+            PortalInvoiceLine(description=i.description, quantity=i.quantity, unit_price=i.unit_price, total=i.total)
+            for i in (t.invoice.items if t.invoice and t.quote_status else [])
+        ],
         title=t.title,
         description=t.description,
         priority=t.priority,
@@ -78,27 +87,41 @@ def my_tickets(user: User = Depends(require_customer), db: Session = Depends(get
 
 @router.post("/tickets", response_model=PortalTicket, status_code=201)
 def raise_ticket(payload: PortalTicketCreate, user: User = Depends(require_customer), db: Session = Depends(get_db)):
-    serial = payload.equipment_serial.strip()
+    serial = (payload.equipment_serial or "").strip() or None
+    if bool(serial) == (payload.warranty_id is not None):
+        raise HTTPException(status_code=422, detail="Choose the equipment to raise the ticket for.")
     # A customer can only raise a ticket for equipment registered to their own account
-    owns_serial = (
-        db.query(Warranty)
-        .filter(Warranty.customer_id == user.customer_id, Warranty.serial_number == serial)
-        .first()
-    )
-    if not owns_serial:
-        raise HTTPException(status_code=403, detail="This serial number is not registered to your account.")
+    owned = db.query(Warranty).filter(Warranty.customer_id == user.customer_id)
+    owned = owned.filter(Warranty.serial_number == serial) if serial else owned.filter(Warranty.id == payload.warranty_id)
+    if not owned.first():
+        raise HTTPException(status_code=403, detail="This equipment is not registered to your account.")
 
     ticket = TicketService.create_ticket(
         db,
         ServiceTicketCreate(
             customer_id=user.customer_id,
             equipment_serial=serial,
+            warranty_id=payload.warranty_id,
             title=payload.title.strip(),
             description=payload.description.strip(),
             priority=payload.priority,
         ),
     )
     return _ticket_out(ticket)
+
+
+@router.post("/tickets/{ticket_id}/quote", response_model=PortalTicket)
+def decide_ticket_quote(
+    ticket_id: int, payload: PortalQuoteDecision, user: User = Depends(require_customer), db: Session = Depends(get_db)
+):
+    ticket = (
+        db.query(ServiceTicket)
+        .filter(ServiceTicket.id == ticket_id, ServiceTicket.customer_id == user.customer_id)
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found.")
+    return _ticket_out(TicketService.decide_quote(db, ticket.id, payload.approved))
 
 
 @router.post("/tickets/{ticket_id}/confirm", response_model=PortalTicket)

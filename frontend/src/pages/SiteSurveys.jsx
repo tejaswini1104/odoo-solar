@@ -11,7 +11,7 @@ import SurveyFindingsModal from '../components/SurveyFindingsModal';
 
 export default function SiteSurveys() {
   const { user } = useAuth();
-  // Sales and technicians work on surveys. Who approves them is still to be decided, so it follows this same rule.
+  // Sales and technicians work on surveys. Technicians measure, and only Sales approve or reject.
   const canWrite = user?.role === 'sales' || user?.role === 'technician';
   const [surveys, setSurveys] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -23,6 +23,7 @@ export default function SiteSurveys() {
   const [findingsFor, setFindingsFor] = useState(null);
   const isTechnician = user?.role === 'technician';
   const isSales = user?.role === 'sales';
+  const awaitingDecision = (row) => row.status === 'Submitted' || row.status === 'Draft';
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -223,7 +224,7 @@ export default function SiteSurveys() {
           {row.status === 'Scheduled' && !isTechnician && (
             <span className="text-xs text-slate-500 font-medium">Awaiting the visit</span>
           )}
-          {canWrite && row.status !== 'Scheduled' && row.status !== 'Approved' && (
+          {isSales && awaitingDecision(row) && (
             <button
               onClick={() => handleApprove(row.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition"
@@ -232,7 +233,7 @@ export default function SiteSurveys() {
               <Check className="w-3.5 h-3.5" /> Approve
             </button>
           )}
-          {canWrite && row.status !== 'Rejected' && (
+          {isSales && awaitingDecision(row) && (
             <button
               onClick={() => handleReject(row.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition"

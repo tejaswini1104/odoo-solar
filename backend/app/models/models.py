@@ -149,7 +149,7 @@ class EquipmentSerial(Base, TimestampMixin):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     # Unique constraint on serial numbers at DB level:
     serial_number = Column(String(100), unique=True, nullable=False, index=True)
-    status = Column(String(50), default="In Stock", nullable=False) # In Stock, Reserved, Dispatched, Installed
+    status = Column(String(50), default="In Stock", nullable=False) # In Stock, Reserved, Dispatched, Installed, Replaced
     order_id = Column(Integer, ForeignKey("sales_orders.id"), nullable=True)
     installation_id = Column(Integer, ForeignKey("installations.id"), nullable=True)
 
@@ -330,13 +330,23 @@ class ServiceTicket(Base, TimestampMixin):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     priority = Column(String(50), default="Medium", nullable=False) # Low, Medium, High, Urgent
-    status = Column(String(50), default="Open", nullable=False)     # Open, Assigned, In Progress, Resolved, Customer Confirmed, Closed
+    # Open, Assigned, Quotation Sent, In Progress, Dispatched, Resolved, Customer Confirmed, Closed
+    status = Column(String(50), default="Open", nullable=False)
     service_type = Column(String(50), nullable=False)              # COVERED, BILLABLE
     customer_charge = Column(Float, default=0.0, nullable=False)
     customer_confirmed = Column(Boolean, default=False, nullable=False)
     invoice_id = Column(Integer, ForeignKey("invoices.id", use_alter=True, name="fk_service_tickets_invoice_id"), nullable=True)
+    warranty_id = Column(Integer, ForeignKey("warranties.id"), nullable=True)   # set for a claim on the bulk panel warranty
+    replacement_serial = Column(String(100), nullable=True)                      # the unit that replaced the faulty one
+    technician_id = Column(Integer, ForeignKey("technicians.id"), nullable=True)  # who visits the customer
+    inspection_notes = Column(Text, nullable=True)                               # the technician's finding at the site visit
+    needs_replacement = Column(Boolean, nullable=True)                           # None until the technician has inspected
+    quote_status = Column(String(20), nullable=True)                             # Pending, Approved, Rejected (billable tickets only)
+    dispatch_serial = Column(String(100), nullable=True)                         # the unit sent out; becomes replacement_serial once fitted
+    dispatched_at = Column(DateTime, nullable=True)
 
     customer = relationship("Customer", back_populates="tickets")
+    technician = relationship("Technician")
     installation = relationship("Installation", back_populates="tickets")
     invoice = relationship("Invoice", foreign_keys=[invoice_id])
 

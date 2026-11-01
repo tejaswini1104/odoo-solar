@@ -10,6 +10,15 @@ from backend.app.schemas.survey_schemas import LeadStatusRequest
 
 router = APIRouter(prefix="/leads", tags=["Leads"])
 
+
+def _mark_converted(lead: Lead) -> None:
+    """Linking a customer does not skip the first call: only a lead that has been called is marked Converted.
+
+    A lead that is still New keeps that status, so the survey booking still insists on the call first.
+    """
+    if lead.lead_status == "Contacted":
+        lead.lead_status = "Converted"
+
 @router.get("", response_model=List[LeadResponse])
 def list_leads(db: Session = Depends(get_db)):
     return db.query(Lead).order_by(Lead.created_at.desc()).all()
@@ -46,7 +55,7 @@ def convert_lead_to_customer(id: int, db: Session = Depends(get_db)):
     ).first()
     if customer:
         lead.customer_id = customer.id
-        lead.lead_status = "Converted"
+        _mark_converted(lead)
         db.commit()
         return customer
 
@@ -62,7 +71,7 @@ def convert_lead_to_customer(id: int, db: Session = Depends(get_db)):
     db.flush()
 
     lead.customer_id = customer.id
-    lead.lead_status = "Converted"
+    _mark_converted(lead)
 
     db.commit()
     db.refresh(customer)

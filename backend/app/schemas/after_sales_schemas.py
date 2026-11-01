@@ -19,16 +19,33 @@ class PortalWarranty(BaseModel):
 
 
 class PortalTicketCreate(BaseModel):
-    equipment_serial: str = Field(min_length=3, max_length=100)
+    equipment_serial: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    warranty_id: Optional[int] = None    # for a claim on the solar panels, which have no serial numbers
     title: str = Field(min_length=3, max_length=255)
     description: str = Field(min_length=5)
     priority: str = Field(default="Medium", pattern="^(Low|Medium|High|Urgent)$")
+
+
+class PortalQuoteDecision(BaseModel):
+    approved: bool
+
+
+class PortalInvoiceLine(BaseModel):
+    description: str
+    quantity: int
+    unit_price: float
+    total: float
 
 
 class PortalTicket(BaseModel):
     id: int
     reference: str
     equipment_serial: str
+    replacement_serial: Optional[str] = None
+    technician_name: Optional[str] = None
+    needs_replacement: Optional[bool] = None
+    quote_status: Optional[str] = None
+    quote_lines: List[PortalInvoiceLine] = []
     title: str
     description: str
     priority: str
@@ -38,13 +55,6 @@ class PortalTicket(BaseModel):
     customer_confirmed: bool
     invoice_id: Optional[int] = None
     created_at: datetime
-
-
-class PortalInvoiceLine(BaseModel):
-    description: str
-    quantity: int
-    unit_price: float
-    total: float
 
 
 class PortalInvoice(BaseModel):

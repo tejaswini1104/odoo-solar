@@ -19,6 +19,8 @@ const statusStyles = {
   'In Progress': 'bg-amber-50 text-amber-700 border-amber-200',
   'Open': 'bg-amber-50 text-amber-700 border-amber-200',
   'Assigned': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  'Quotation Sent': 'bg-blue-50 text-blue-700 border-blue-200',
+  'Awaiting Dispatch': 'bg-purple-50 text-purple-700 border-purple-200',
   'Customer Confirmed': 'bg-teal-50 text-teal-700 border-teal-200 font-medium',
 
   // Info

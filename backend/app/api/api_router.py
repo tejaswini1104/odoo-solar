@@ -14,6 +14,7 @@ from backend.app.api.endpoints import (
     installations,
     warranties,
     tickets,
+    repair_visits,
     invoices,
     inventory,
     profitability,
@@ -27,6 +28,7 @@ from backend.app.api.endpoints import (
     portal_billing,
     portal_after_sales,
     notifications,
+    public,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -60,11 +62,13 @@ api_router.include_router(inventory.router, dependencies=gate(read=(ADMIN, SALES
 api_router.include_router(installations.router, dependencies=gate(read=(ADMIN, SALES, TECHNICIAN), write=(SALES, TECHNICIAN)))
 api_router.include_router(warranties.router, dependencies=gate(read=(ADMIN, SALES, SUPPORT)))
 api_router.include_router(tickets.router, dependencies=gate(read=(ADMIN, SALES, SUPPORT), write=(SUPPORT,)))
+api_router.include_router(repair_visits.router, dependencies=gate(read=(TECHNICIAN,), write=(TECHNICIAN,)))
 api_router.include_router(invoices.router, dependencies=gate(read=(ADMIN, SALES, SUPPORT), write=(SALES, SUPPORT)))
 
 # ----- Sign in, and the customer portal (each endpoint checks its own access) -----
 api_router.include_router(auth.router)
 api_router.include_router(notifications.router)
+api_router.include_router(public.router)  # no sign-in: the page a QR label opens
 api_router.include_router(portal.router)
 api_router.include_router(portal_billing.router)
 api_router.include_router(portal_after_sales.router)

@@ -2,6 +2,7 @@ from typing import List
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from backend.app.api.deps import get_current_user
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.roles import SALES, SUPPORT
 from backend.app.models.models import Invoice, InvoiceItem, ServiceTicket, User
@@ -89,7 +90,7 @@ def update_invoice_items(
             total=tot
         ))
 
-    tax = round(subtotal * 0.18, 2)
+    tax = round(subtotal * settings.GST_PERCENT / 100, 2)
     total = round(subtotal + tax, 2)
 
     inv.subtotal = subtotal

@@ -17,6 +17,7 @@ import Dispatch from './pages/Dispatch';
 import Installations from './pages/Installations';
 import Warranties from './pages/Warranties';
 import ServiceTickets from './pages/ServiceTickets';
+import RepairVisits from './pages/RepairVisits';
 import Invoices from './pages/Invoices';
 import Profitability from './pages/Profitability';
 import StaffAccounts from './pages/StaffAccounts';
@@ -36,6 +37,7 @@ const tabTitles = {
   installations: 'Rooftop Installations & Completion',
   warranties: 'Warranty Registry Engine',
   tickets: 'After-Sales Service Tickets',
+  repairs: 'Repair Visits',
   invoices: 'Billing & Invoices',
   profitability: 'Order-Level Profitability View',
   users: 'Staff Accounts',
@@ -71,6 +73,8 @@ export default function App() {
         return <Dispatch setActiveTab={setActiveTab} />;
       case 'installations':
         return <Installations setActiveTab={setActiveTab} />;
+      case 'repairs':
+        return <RepairVisits />;
       case 'warranties':
         return <Warranties />;
       case 'tickets':
