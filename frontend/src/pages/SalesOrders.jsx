@@ -6,8 +6,11 @@ import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { CreditCard, CheckCircle2, AlertCircle, ShieldCheck, ShoppingCart, ArrowRight } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
 
 export default function SalesOrders({ setActiveTab }) {
+  const { user } = useAuth();
+  const isSales = user?.role === 'sales'; // only Sales record payments, verify them and confirm orders
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -18,14 +21,17 @@ export default function SalesOrders({ setActiveTab }) {
     reference_notes: ''
   });
   const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [pendingPayments, setPendingPayments] = useState([]);
   const { addToast } = useToast();
 
   const fetchOrders = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getOrders();
+      const [data, payments] = await Promise.all([api.getOrders(), api.getPayments()]);
       setOrders(data);
+      // Order payments only. Repair invoice payments are verified by Support on the Invoices screen.
+      setPendingPayments(payments.filter((p) => p.status === 'Pending Verification' && p.order_id));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -70,6 +76,23 @@ export default function SalesOrders({ setActiveTab }) {
     }
   };
 
+  // Before the hardware leaves the warehouse an order can still be cancelled; stock and the job are released
+  const handleCancelOrder = async (order) => {
+    const reason = window.prompt(`Why is order SO-${String(order.id).padStart(4, '0')} being cancelled?`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      addToast('Please give a short reason for the cancellation.', 'error');
+      return;
+    }
+    try {
+      await api.cancelOrder(order.id, reason.trim());
+      addToast(`Order SO-${String(order.id).padStart(4, '0')} cancelled. Reserved stock is free again and the installation job was removed.${order.advance_paid > 0 ? ` Refund the customer ₹${order.advance_paid.toLocaleString()}.` : ''}`, 'success', 8000);
+      fetchOrders();
+    } catch (err) {
+      addToast(`Could not cancel: ${err.message}`, 'error', 6000);
+    }
+  };
+
   const handleConfirmOrder = async (orderId) => {
     try {
       const confirmed = await api.confirmOrder(orderId);
@@ -82,6 +105,16 @@ export default function SalesOrders({ setActiveTab }) {
     } catch (err) {
       // Backend hard gate will reject if no advance payment or unapproved survey
       addToast(`Confirmation Rejected: ${err.message}`, 'error', 6000);
+    }
+  };
+
+  const handleVerifyPayment = async (paymentId) => {
+    try {
+      await api.verifyPayment(paymentId);
+      addToast('Payment verified. It now counts towards the advance.', 'success');
+      fetchOrders();
+    } catch (err) {
+      addToast(`Verification failed: ${err.message}`, 'error');
     }
   };
 
@@ -138,7 +171,9 @@ export default function SalesOrders({ setActiveTab }) {
       accessor: 'id',
       render: (row) => (
         <div className="flex items-center gap-2">
-          {row.status === 'Pending Confirmation' || row.status === 'Draft' ? (
+          {(row.status === 'Pending Confirmation' || row.status === 'Draft') && !isSales ? (
+            <span className="text-xs text-slate-500 font-medium">Awaiting Sales</span>
+          ) : row.status === 'Pending Confirmation' || row.status === 'Draft' ? (
             <>
               <button
                 onClick={() => handleOpenPayment(row)}
@@ -153,9 +188,25 @@ export default function SalesOrders({ setActiveTab }) {
               >
                 <CheckCircle2 className="w-3.5 h-3.5" /> Confirm Order
               </button>
+              <button
+                onClick={() => handleCancelOrder(row)}
+                className="px-2 py-1 text-xs font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition"
+              >
+                Cancel
+              </button>
+            </>
+          ) : row.status === 'Confirmed' && isSales ? (
+            <>
+              <span className="text-xs text-slate-500 font-medium">Order Confirmed</span>
+              <button
+                onClick={() => handleCancelOrder(row)}
+                className="px-2 py-1 text-xs font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition"
+              >
+                Cancel
+              </button>
             </>
           ) : (
-            <span className="text-xs text-slate-500 font-medium">Order Confirmed</span>
+            <span className="text-xs text-slate-500 font-medium">{row.status === 'Cancelled' ? 'Cancelled' : 'Order Confirmed'}</span>
           )}
         </div>
       )
@@ -184,6 +235,44 @@ export default function SalesOrders({ setActiveTab }) {
         </div>
       </div>
 
+      {pendingPayments.length > 0 && (
+        <div className="bg-white rounded-xl border border-amber-200 p-4">
+          <h4 className="text-sm font-bold text-slate-900 mb-1">Customer payments waiting for verification</h4>
+          <p className="text-xs text-slate-500 mb-3">Check each reference against the bank statement, then verify it.</p>
+          <table className="w-full text-xs">
+            <thead className="text-left text-slate-500">
+              <tr>
+                <th className="py-1.5">Reference</th>
+                <th className="py-1.5">Order</th>
+                <th className="py-1.5 text-right">Amount</th>
+                <th className="py-1.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {pendingPayments.map((p) => (
+                <tr key={p.id}>
+                  <td className="py-1.5 font-mono">{p.reference_number || '-'}</td>
+                  <td className="py-1.5 font-mono">{p.order_id ? `SO-${p.order_id.toString().padStart(4, '0')}` : '-'}</td>
+                  <td className="py-1.5 text-right">₹{p.amount.toLocaleString('en-IN')}</td>
+                  <td className="py-1.5 text-right">
+                    {isSales ? (
+                      <button
+                        onClick={() => handleVerifyPayment(p.id)}
+                        className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white transition"
+                      >
+                        Verify
+                      </button>
+                    ) : (
+                      <span className="text-slate-400">Sales verify</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <DataTable
         columns={columns}
         data={orders}
@@ -211,11 +300,11 @@ export default function SalesOrders({ setActiveTab }) {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Payment Amount (₹) *</label>
-              <input
+              <input max="10000000"
                 required
                 type="number"
-                min="1"
-                step="100"
+                min="0.01"
+                step="0.01"
                 value={paymentData.amount}
                 onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
@@ -236,7 +325,7 @@ export default function SalesOrders({ setActiveTab }) {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Bank Reference / Notes</label>
-              <input
+              <input maxLength={500}
                 type="text"
                 value={paymentData.reference_notes}
                 onChange={(e) => setPaymentData({ ...paymentData, reference_notes: e.target.value })}

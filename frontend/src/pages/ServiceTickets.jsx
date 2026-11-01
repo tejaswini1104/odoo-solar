@@ -16,19 +16,40 @@ import {
   ShieldCheck,
   Receipt
 } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
 
 export default function ServiceTickets({ setActiveTab }) {
+  const { user } = useAuth();
+  const canManage = user?.role === 'support'; // Support raises, resolves and closes tickets; other roles view them
   const [tickets, setTickets] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Support find the customer by phone, name, address or the serial on the unit, then pick the faulty equipment
+  const [query, setQuery] = useState('');
+  const [matches, setMatches] = useState(null);
+  const [picked, setPicked] = useState(null);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) { setMatches(null); return undefined; }
+    const timer = setTimeout(() => {
+      api.searchCustomers(term).then(setMatches).catch(() => setMatches([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const chooseEquipment = (customer, item) => {
+    setPicked({ customer, item });
+    setFormData((prev) => ({ ...prev, customer_id: customer.id, equipment_serial: item.serial_number }));
+  };
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
     customer_id: '',
-    equipment_serial: 'INV-2026-0042',
+    equipment_serial: '',
     title: '',
     description: '',
     priority: 'Medium'
@@ -82,6 +103,10 @@ export default function ServiceTickets({ setActiveTab }) {
       }
 
       setIsModalOpen(false);
+      setQuery('');
+      setMatches(null);
+      setPicked(null);
+      setFormData((prev) => ({ ...prev, equipment_serial: '', title: '', description: '' }));
       loadData();
     } catch (err) {
       addToast(`Ticket creation failed: ${err.message}`, 'error');
@@ -196,7 +221,8 @@ export default function ServiceTickets({ setActiveTab }) {
       accessor: 'id',
       render: (row) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          {row.status === 'Open' || row.status === 'In Progress' || row.status === 'Assigned' ? (
+          {!canManage && <span className="text-xs text-slate-400">Handled by Support</span>}
+          {canManage && (row.status === 'Open' || row.status === 'In Progress' || row.status === 'Assigned') ? (
             <button
               onClick={() => handleResolve(row.id)}
               className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-600 text-slate-950 transition"
@@ -206,7 +232,7 @@ export default function ServiceTickets({ setActiveTab }) {
             </button>
           ) : null}
 
-          {!row.customer_confirmed && row.status !== 'Closed' ? (
+          {canManage && !row.customer_confirmed && row.status !== 'Closed' ? (
             <button
               onClick={() => handleCustomerConfirm(row.id)}
               className="px-2.5 py-1 text-xs font-semibold rounded border border-teal-300 text-teal-800 hover:bg-teal-50 transition"
@@ -216,7 +242,7 @@ export default function ServiceTickets({ setActiveTab }) {
             </button>
           ) : null}
 
-          {row.status !== 'Closed' ? (
+          {canManage && row.status !== 'Closed' ? (
             <button
               onClick={() => handleClose(row.id)}
               className={`px-2.5 py-1 text-xs font-semibold rounded transition ${
@@ -228,9 +254,9 @@ export default function ServiceTickets({ setActiveTab }) {
             >
               Close
             </button>
-          ) : (
+          ) : row.status === 'Closed' ? (
             <span className="text-xs text-slate-400 font-semibold">Closed</span>
-          )}
+          ) : null}
         </div>
       )
     }
@@ -257,12 +283,14 @@ export default function ServiceTickets({ setActiveTab }) {
           <h3 className="text-lg font-bold text-slate-900">After-Sales Service Tickets</h3>
           <p className="text-xs text-slate-500">Track equipment complaints, evaluate warranty coverage, and bill out-of-warranty repairs.</p>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
-        >
-          <Plus className="w-4 h-4" /> Create Service Ticket
-        </button>
+        {canManage && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
+          >
+            <Plus className="w-4 h-4" /> Create Service Ticket
+          </button>
+        )}
       </div>
 
       <DataTable
@@ -279,54 +307,57 @@ export default function ServiceTickets({ setActiveTab }) {
       >
         <form onSubmit={handleCreate} className="space-y-4 text-sm">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Customer *</label>
-            <select
-              required
-              value={formData.customer_id}
-              onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white"
-            >
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.city})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Equipment Serial Number *
-            </label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Find the customer or the unit *</label>
             <input
-              required
-              type="text"
-              value={formData.equipment_serial}
-              onChange={(e) => setFormData({ ...formData, equipment_serial: e.target.value })}
-              placeholder="e.g. INV-2026-0042 (Active) or INV-2023-0018 (Expired)"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              type="search"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setPicked(null); setFormData((prev) => ({ ...prev, equipment_serial: '' })); }}
+              placeholder="Phone number, name, address or serial number"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
             />
-            <div className="flex gap-2 mt-1.5">
-              <button
-                type="button"
-                onClick={() => setFormData({ ...formData, equipment_serial: 'INV-2026-0042', title: 'Inverter stopped working' })}
-                className="text-[11px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 font-mono"
-              >
-                Use Seed: INV-2026-0042 (COVERED ₹0)
-              </button>
-              <button
-                type="button"
-                onClick={() => setFormData({ ...formData, equipment_serial: 'INV-2023-0018', title: 'Inverter hardware fault E04' })}
-                className="text-[11px] text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded border border-rose-200 font-mono"
-              >
-                Use Seed: INV-2023-0018 (BILLABLE)
-              </button>
-            </div>
+
+            {picked && (
+              <div className="mt-2 p-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs">
+                <span className="font-semibold text-slate-900">{picked.customer.name}</span> · {picked.item.product_name} ·{' '}
+                <span className="font-mono font-bold">{picked.item.serial_number}</span>
+                <span className={`ml-2 px-1.5 py-0.5 rounded font-semibold ${picked.item.under_warranty ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-100 text-rose-800'}`}>
+                  {picked.item.under_warranty ? `Under warranty until ${picked.item.warranty_end}` : 'Out of warranty: will be billed'}
+                </span>
+              </div>
+            )}
+
+            {!picked && matches && (
+              <div className="mt-2 max-h-56 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                {matches.length === 0 && <p className="p-3 text-xs text-slate-500">No customer or serial number matches that.</p>}
+                {matches.map((c) => (
+                  <div key={c.id} className="p-2.5">
+                    <div className="text-xs font-semibold text-slate-900">{c.name} <span className="font-normal text-slate-500">· {c.phone} · {c.address}</span></div>
+                    {c.equipment.length === 0 && <div className="text-[11px] text-slate-500 mt-1">No delivered equipment yet.</div>}
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {c.equipment.map((item) => (
+                        <button
+                          key={item.serial_number}
+                          type="button"
+                          onClick={() => chooseEquipment(c, item)}
+                          className="text-left px-2 py-1 rounded border border-slate-300 hover:border-amber-500 hover:bg-amber-50"
+                        >
+                          <span className="block text-[11px] font-semibold text-slate-800">{item.product_name}</span>
+                          <span className="block font-mono text-[11px] text-slate-600">{item.serial_number}</span>
+                          <span className={`block text-[10px] font-semibold ${item.under_warranty ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {item.under_warranty ? `Warranty to ${item.warranty_end}` : 'No warranty'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Ticket Title / Fault Summary *</label>
-            <input
+            <input maxLength={255}
               required
               type="text"
               value={formData.title}
@@ -354,7 +385,7 @@ export default function ServiceTickets({ setActiveTab }) {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Detailed Description *</label>
-            <textarea
+            <textarea maxLength={2000}
               required
               rows={2}
               value={formData.description}
@@ -374,7 +405,7 @@ export default function ServiceTickets({ setActiveTab }) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !formData.equipment_serial}
               className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold rounded-lg transition disabled:opacity-50"
             >
               {submitting ? 'Checking Warranty...' : 'Submit Ticket & Check Warranty'}

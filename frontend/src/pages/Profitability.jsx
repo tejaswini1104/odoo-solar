@@ -64,7 +64,7 @@ export default function Profitability() {
       header: 'Labour Cost',
       accessor: 'labour_cost',
       render: (row) => (
-        <span className="text-xs text-slate-600">₹{row.labour_cost?.toLocaleString()}</span>
+        <span className="text-xs text-slate-600">₹{row.labour_cost?.toLocaleString()}<span className="block text-[10px] text-slate-400">{row.labour_basis}</span></span>
       )
     },
     {
@@ -90,6 +90,18 @@ export default function Profitability() {
           </div>
         );
       }
+    },
+    {
+      header: 'Paid / Balance',
+      accessor: 'amount_paid',
+      render: (row) => (
+        <div className="text-xs">
+          <div className="font-semibold text-slate-800">₹{row.amount_paid?.toLocaleString()} paid</div>
+          <div className={row.balance_due > 0 ? 'text-amber-700' : 'text-emerald-700'}>
+            {row.balance_due > 0 ? `₹${row.balance_due.toLocaleString()} due` : 'Settled'}
+          </div>
+        </div>
+      )
     },
     {
       header: 'Order Status',
@@ -133,7 +145,7 @@ export default function Profitability() {
       <div>
         <h3 className="text-lg font-bold text-slate-900">Per-Order Profitability Table</h3>
         <p className="text-xs text-slate-500">
-          Revenue excludes GST. Material cost is the cost of serialized units dispatched on each order plus bulk BOM items; labour is the flat labour cost. Completed installations only.
+          Revenue excludes GST. Material cost is the cost of serialized units dispatched on each order plus bulk BOM items; labour is the recorded hours at each technician's rate, or the flat labour cost when no hours were recorded. Completed installations only.
         </p>
       </div>
 

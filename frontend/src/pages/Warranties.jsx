@@ -115,7 +115,7 @@ export default function Warranties() {
 
         {/* Quick serial search */}
         <form onSubmit={handleSearch} className="flex gap-2 w-full sm:w-auto">
-          <input
+          <input maxLength={100}
             type="text"
             value={searchSerial}
             onChange={(e) => setSearchSerial(e.target.value)}

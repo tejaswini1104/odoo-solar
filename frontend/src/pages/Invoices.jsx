@@ -6,8 +6,15 @@ import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { Receipt, Edit3, CheckCircle2, Eye, Plus, Trash2 } from 'lucide-react';
+import { Printer } from 'lucide-react';
+import { printInvoice } from '../utils/printDocument';
+import { useAuth } from '../auth/AuthContext';
 
 export default function Invoices() {
+  const { user } = useAuth();
+  // Repair invoices (tied to a ticket) are handled by Support. Installation invoices are handled by Sales.
+  const canHandle = (invoice) => (invoice.ticket_id ? user?.role === 'support' : user?.role === 'sales');
+  const [pendingRepairPayments, setPendingRepairPayments] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -21,8 +28,9 @@ export default function Invoices() {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getInvoices();
+      const [data, payments] = await Promise.all([api.getInvoices(), api.getPayments()]);
       setInvoices(data);
+      setPendingRepairPayments(payments.filter((p) => p.status === 'Pending Verification' && p.invoice_id));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -70,6 +78,26 @@ export default function Invoices() {
       addToast(`Update failed: ${err.message}`, 'error');
     } finally {
       setSavingItems(false);
+    }
+  };
+
+  const handleSend = async (invId) => {
+    try {
+      await api.sendInvoice(invId);
+      addToast('Invoice sent. The customer can now see it in their portal.', 'success');
+      fetchInvoices();
+    } catch (err) {
+      addToast(`Could not send: ${err.message}`, 'error', 6000);
+    }
+  };
+
+  const handleVerifyPayment = async (paymentId) => {
+    try {
+      await api.verifyPayment(paymentId);
+      addToast('Payment verified. The invoice is marked Paid once it is fully covered.', 'success');
+      fetchInvoices();
+    } catch (err) {
+      addToast(`Verification failed: ${err.message}`, 'error', 6000);
     }
   };
 
@@ -137,6 +165,12 @@ export default function Invoices() {
       accessor: 'id',
       render: (row) => (
         <div className="flex items-center gap-1.5">
+          {!canHandle(row) && (
+            <span className="text-xs text-slate-400">
+              {row.ticket_id ? 'Handled by Support' : 'Handled by Sales'}
+            </span>
+          )}
+          {canHandle(row) && row.status === 'Draft' && (
           <button
             onClick={() => handleOpenEdit(row)}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
@@ -144,7 +178,24 @@ export default function Invoices() {
           >
             <Edit3 className="w-3.5 h-3.5" /> Edit Items
           </button>
-          {row.status !== 'Paid' && (
+          )}
+          <button
+            onClick={() => printInvoice(row)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
+            title="Print, or save as PDF to send to the customer"
+          >
+            <Printer className="w-3.5 h-3.5" /> PDF
+          </button>
+          {canHandle(row) && row.status === 'Draft' && (
+            <button
+              onClick={() => handleSend(row.id)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-slate-900 hover:bg-slate-800 text-white transition"
+              title="Make this invoice visible to the customer. A repair invoice can be sent once its ticket is resolved."
+            >
+              Send to customer
+            </button>
+          )}
+          {canHandle(row) && row.status !== 'Paid' && (
             <button
               onClick={() => handleMarkPaid(row.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white transition"
@@ -170,6 +221,47 @@ export default function Invoices() {
         </p>
       </div>
 
+      {pendingRepairPayments.length > 0 && (user?.role === 'support' || user?.role === 'admin') && (
+        <div className="bg-white rounded-xl border border-amber-200 p-4">
+          <h4 className="text-sm font-bold text-slate-900 mb-1">Repair payments waiting for verification</h4>
+          <p className="text-xs text-slate-500 mb-3">Check each reference against the bank statement, then verify it.</p>
+          <table className="w-full text-xs">
+            <thead className="text-left text-slate-500">
+              <tr>
+                <th className="py-1.5">Reference</th>
+                <th className="py-1.5">Invoice</th>
+                <th className="py-1.5 text-right">Amount</th>
+                <th className="py-1.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {pendingRepairPayments.map((p) => {
+                const invoice = invoices.find((i) => i.id === p.invoice_id);
+                return (
+                  <tr key={p.id}>
+                    <td className="py-1.5 font-mono">{p.reference_number || '-'}</td>
+                    <td className="py-1.5 font-mono">{invoice ? invoice.invoice_number : `#${p.invoice_id}`}</td>
+                    <td className="py-1.5 text-right">₹{p.amount.toLocaleString('en-IN')}</td>
+                    <td className="py-1.5 text-right">
+                      {user?.role === 'support' ? (
+                        <button
+                          onClick={() => handleVerifyPayment(p.id)}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white transition"
+                        >
+                          Verify
+                        </button>
+                      ) : (
+                        <span className="text-slate-400">Support verify</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <DataTable
         columns={columns}
         data={invoices}
@@ -191,7 +283,7 @@ export default function Invoices() {
           <div className="space-y-2">
             {editingItems.map((item, index) => (
               <div key={index} className="flex gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-200">
-                <input
+                <input maxLength={2000}
                   required
                   type="text"
                   placeholder="Line Item Description"
@@ -203,7 +295,7 @@ export default function Invoices() {
                   }}
                   className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-amber-500"
                 />
-                <input
+                <input max="1000"
                   required
                   type="number"
                   min="1"
@@ -216,7 +308,7 @@ export default function Invoices() {
                   }}
                   className="w-16 px-2 py-1.5 border border-slate-300 rounded text-xs bg-white text-center focus:ring-1 focus:ring-amber-500"
                 />
-                <input
+                <input max="10000000"
                   required
                   type="number"
                   step="50"

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
 import { ToastProvider } from './components/Toast';
+import { useAuth } from './auth/AuthContext';
+import { TABS_BY_ROLE } from './auth/access';
 
 // Pages
 import Dashboard from './pages/Dashboard';
@@ -17,6 +19,10 @@ import Warranties from './pages/Warranties';
 import ServiceTickets from './pages/ServiceTickets';
 import Invoices from './pages/Invoices';
 import Profitability from './pages/Profitability';
+import StaffAccounts from './pages/StaffAccounts';
+import Subsidies from './pages/Subsidies';
+import Payroll from './pages/Payroll';
+import StockPurchases from './pages/StockPurchases';
 
 const tabTitles = {
   dashboard: 'Executive Dashboard',
@@ -32,10 +38,18 @@ const tabTitles = {
   tickets: 'After-Sales Service Tickets',
   invoices: 'Billing & Invoices',
   profitability: 'Order-Level Profitability View',
+  users: 'Staff Accounts',
+  subsidies: 'Government Subsidy Files',
+  payroll: 'Technician Hours & Pay',
+  stock: 'Stock Purchases',
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const { user } = useAuth();
+  const allowedTabs = TABS_BY_ROLE[user?.role] || [];
+  const [requestedTab, setActiveTab] = useState(allowedTabs[0]);
+  // Never show a screen the role is not allowed to use, whatever was asked for
+  const activeTab = allowedTabs.includes(requestedTab) ? requestedTab : allowedTabs[0];
 
   const renderContent = () => {
     switch (activeTab) {
@@ -65,8 +79,16 @@ export default function App() {
         return <Invoices />;
       case 'profitability':
         return <Profitability />;
+      case 'users':
+        return <StaffAccounts />;
+      case 'subsidies':
+        return <Subsidies />;
+      case 'payroll':
+        return <Payroll />;
+      case 'stock':
+        return <StockPurchases />;
       default:
-        return <Dashboard setActiveTab={setActiveTab} />;
+        return null;
     }
   };
 
@@ -78,7 +100,7 @@ export default function App() {
 
         {/* Main Workspace */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <Navbar activeTitle={tabTitles[activeTab] || 'SunPower ERP'} />
+          <Navbar activeTitle={tabTitles[activeTab] || 'SunPower ERP'} onOpenAlert={setActiveTab} />
           <main className="flex-1 p-8 overflow-y-auto">
             <div className="max-w-7xl mx-auto pb-12">
               {renderContent()}

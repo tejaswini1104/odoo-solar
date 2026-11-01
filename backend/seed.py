@@ -22,8 +22,22 @@ from backend.app.models.models import (
     Warranty,
     ServiceTicket,
     Invoice,
-    InvoiceItem
+    InvoiceItem,
+    User,
+    SubsidyApplication,
+    SubsidyEvent
 )
+from backend.app.core.security import hash_password
+
+# Demo staff logins, one per role. Change these passwords (Account > change-password) before any real use.
+DEMO_PASSWORD = "SunPower@123"
+DEMO_STAFF = [
+    ("admin@sunpower.test", "Dhruv Admin", "admin"),
+    ("sales@sunpower.test", "Sneha Sales", "sales"),
+    ("technician@sunpower.test", None, "technician"),  # takes the name of the first technician record
+    ("support@sunpower.test", "Sunita Support", "support"),
+    ("warehouse@sunpower.test", "Wasim Warehouse", "warehouse"),
+]
 
 def seed_database():
     print("Dropping and recreating database schema...")
@@ -58,6 +72,18 @@ def seed_database():
             t = Technician(name=name, phone=phone)
             db.add(t)
             tech_objs.append(t)
+        db.flush()
+
+        print("Seeding demo staff logins...")
+        for email, name, role in DEMO_STAFF:
+            db.add(User(
+                name=name or tech_objs[0].name,
+                email=email,
+                phone=None,
+                password_hash=hash_password(DEMO_PASSWORD),
+                role=role,
+                technician_id=tech_objs[0].id if role == "technician" else None,
+            ))
         db.flush()
 
         print("Seeding Products...")
@@ -424,6 +450,24 @@ def seed_database():
         db.add(ravi_panel_warranty)
         db.flush()
 
+        print("Seeding Ravi Kumar's subsidy file (he asked for the government subsidy)...")
+        ravi_subsidy = SubsidyApplication(
+            order_id=ravi_order.id,
+            customer_id=ravi.id,
+            status="Applied",
+            reference_number="SUB-2026-RK-001",
+            expected_amount=78000.0,
+            applied_on=date.today() - timedelta(days=9),
+        )
+        db.add(ravi_subsidy)
+        db.flush()
+        for step_status, step_note in [
+            ("Documents pending", "File opened because the customer asked for the subsidy"),
+            ("Documents collected", "Aadhaar, electricity bill and roof ownership proof received"),
+            ("Applied", "Submitted on the national rooftop portal"),
+        ]:
+            db.add(SubsidyEvent(subsidy_id=ravi_subsidy.id, status=step_status, note=step_note))
+
         print("Seeding Active Ticket on INV-2026-0042 (COVERED -> Rs. 0)...")
         # Ticket: "Inverter stopped working" on INV-2026-0042 → should resolve to WARRANTY ACTIVE → COVERED → ₹0.
         ravi_ticket = ServiceTicket(
@@ -582,6 +626,9 @@ def seed_database():
 
         db.commit()
         print("SEEDING COMPLETE SUCCESSFULLY!")
+        print(f"Demo staff logins (password for all: {DEMO_PASSWORD}):")
+        for email, _name, role in DEMO_STAFF:
+            print(f"   {role:<10} {email}")
         print("1. Ravi Kumar (INV-2026-0042) -> Active Warranty -> COVERED -> Rs. 0")
         print("2. Anand Sharma (INV-2023-0018) -> Expired Warranty -> BILLABLE -> Draft Invoice Rs. 7,080")
     except Exception as e:

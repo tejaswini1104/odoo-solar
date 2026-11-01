@@ -33,7 +33,7 @@ export default function DataTable({
       <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50">
         <div className="relative w-full sm:w-72">
           <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-          <input
+          <input maxLength={100}
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}

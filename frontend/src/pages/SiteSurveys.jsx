@@ -6,8 +6,13 @@ import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { Plus, Check, X, ShieldAlert, Compass, User, Wrench } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import SurveyFindingsModal from '../components/SurveyFindingsModal';
 
 export default function SiteSurveys() {
+  const { user } = useAuth();
+  // Sales and technicians work on surveys. Who approves them is still to be decided, so it follows this same rule.
+  const canWrite = user?.role === 'sales' || user?.role === 'technician';
   const [surveys, setSurveys] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [technicians, setTechnicians] = useState([]);
@@ -15,6 +20,9 @@ export default function SiteSurveys() {
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [findingsFor, setFindingsFor] = useState(null);
+  const isTechnician = user?.role === 'technician';
+  const isSales = user?.role === 'sales';
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -77,6 +85,16 @@ export default function SiteSurveys() {
     }
   };
 
+  const handleReassign = async (survey, technicianId) => {
+    try {
+      await api.reassignSurvey(survey.id, technicianId);
+      addToast('Survey reassigned. It now appears on the new technician\'s list.', 'success');
+      loadData();
+    } catch (err) {
+      addToast(`Could not reassign: ${err.message}`, 'error', 6000);
+    }
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
@@ -118,34 +136,60 @@ export default function SiteSurveys() {
     {
       header: 'Roof Technical Specs',
       accessor: 'roof_area',
-      render: (row) => (
-        <div className="text-xs space-y-0.5">
-          <div><strong className="text-slate-800">Area:</strong> {row.roof_area} sq.ft</div>
-          <div><strong className="text-slate-800">Orientation:</strong> {row.roof_direction} ({row.roof_tilt}°)</div>
-          <div><strong className="text-slate-800">Shading:</strong> <span className={row.shading_level === 'High' ? 'text-rose-600 font-bold' : 'text-slate-600'}>{row.shading_level}</span></div>
-        </div>
-      )
+      render: (row) =>
+        row.roof_area == null ? (
+          <div className="text-xs text-slate-600 space-y-0.5">
+            <div className="font-semibold text-slate-800">
+              Visit on {row.scheduled_date ? new Date(row.scheduled_date).toLocaleDateString('en-IN') : 'a date to be set'}
+            </div>
+            <div>Measurements not recorded yet</div>
+            {row.survey_notes && <div className="text-slate-500 truncate max-w-[14rem]">{row.survey_notes}</div>}
+          </div>
+        ) : (
+          <div className="text-xs space-y-0.5">
+            <div><strong className="text-slate-800">Area:</strong> {row.roof_area} sq.ft</div>
+            <div><strong className="text-slate-800">Orientation:</strong> {row.roof_direction} ({row.roof_tilt}°)</div>
+            <div><strong className="text-slate-800">Shading:</strong> <span className={row.shading_level === 'High' ? 'text-rose-600 font-bold' : 'text-slate-600'}>{row.shading_level}</span></div>
+          </div>
+        )
     },
     {
       header: 'Grid & Cable Distance',
       accessor: 'grid_suitability',
-      render: (row) => (
-        <div className="text-xs space-y-0.5">
-          <div><strong className="text-slate-800">Grid:</strong> {row.grid_suitability}</div>
-          <div><strong className="text-slate-800">Cable Run:</strong> {row.cable_distance}m</div>
-          <div className="text-amber-700 font-bold mt-1">Rec. {row.recommended_capacity} kW</div>
-        </div>
-      )
+      render: (row) =>
+        row.roof_area == null ? (
+          <span className="text-xs text-slate-400">-</span>
+        ) : (
+          <div className="text-xs space-y-0.5">
+            <div><strong className="text-slate-800">Grid:</strong> {row.grid_suitability}</div>
+            <div><strong className="text-slate-800">Cable Run:</strong> {row.cable_distance}m</div>
+            <div className="text-amber-700 font-bold mt-1">
+              Rec. {row.recommended_capacity} kW{row.recommended_system_type ? ` ${row.recommended_system_type}` : ''}
+            </div>
+          </div>
+        )
     },
     {
       header: 'Technician',
       accessor: 'technician_name',
-      render: (row) => (
-        <div className="text-xs flex items-center gap-1.5 text-slate-700">
-          <Wrench className="w-3.5 h-3.5 text-slate-400" />
-          <span>{row.technician_name}</span>
-        </div>
-      )
+      render: (row) =>
+        isSales && row.status === 'Scheduled' ? (
+          <select
+            value={row.technician_id || ''}
+            onChange={(e) => handleReassign(row, Number(e.target.value))}
+            className="px-2 py-1 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-amber-500"
+            title="Sales can hand the visit to another technician"
+          >
+            {technicians.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="text-xs flex items-center gap-1.5 text-slate-700">
+            <Wrench className="w-3.5 h-3.5 text-slate-400" />
+            <span>{row.technician_name}</span>
+          </div>
+        )
     },
     {
       header: 'Hard Gate Status',
@@ -155,6 +199,8 @@ export default function SiteSurveys() {
           <StatusBadge status={row.status} />
           {row.status === 'Approved' ? (
             <p className="text-[10px] text-emerald-600 mt-0.5 font-medium">✓ Ready for Quotation</p>
+          ) : row.status === 'Scheduled' ? (
+            <p className="text-[10px] text-slate-500 mt-0.5 font-medium">Waiting for the site visit</p>
           ) : (
             <p className="text-[10px] text-rose-500 mt-0.5 font-medium">⚠ Quotation Blocked</p>
           )}
@@ -166,7 +212,18 @@ export default function SiteSurveys() {
       accessor: 'id',
       render: (row) => (
         <div className="flex items-center gap-1.5">
-          {row.status !== 'Approved' && (
+          {row.status === 'Scheduled' && isTechnician && (
+            <button
+              onClick={() => setFindingsFor(row)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 text-slate-950 hover:bg-amber-600 transition"
+            >
+              Record findings
+            </button>
+          )}
+          {row.status === 'Scheduled' && !isTechnician && (
+            <span className="text-xs text-slate-500 font-medium">Awaiting the visit</span>
+          )}
+          {canWrite && row.status !== 'Scheduled' && row.status !== 'Approved' && (
             <button
               onClick={() => handleApprove(row.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition"
@@ -175,7 +232,7 @@ export default function SiteSurveys() {
               <Check className="w-3.5 h-3.5" /> Approve
             </button>
           )}
-          {row.status !== 'Rejected' && (
+          {canWrite && row.status !== 'Rejected' && (
             <button
               onClick={() => handleReject(row.id)}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded border border-rose-300 text-rose-700 hover:bg-rose-50 transition"
@@ -209,13 +266,22 @@ export default function SiteSurveys() {
           <h3 className="text-lg font-bold text-slate-900">Technical Site Surveys</h3>
           <p className="text-xs text-slate-500">Rooftop inspection parameters, shading assessment, and hard approval gate.</p>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
-        >
-          <Plus className="w-4 h-4" /> New Site Survey
-        </button>
+        {canWrite && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
+          >
+            <Plus className="w-4 h-4" /> New Site Survey
+          </button>
+        )}
       </div>
+
+      <SurveyFindingsModal
+        survey={findingsFor}
+        customerName={customers.find((c) => findingsFor && c.id === findingsFor.customer_id)?.name}
+        onClose={() => setFindingsFor(null)}
+        onSaved={loadData}
+      />
 
       <DataTable
         columns={columns}
@@ -266,7 +332,7 @@ export default function SiteSurveys() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Roof Area (sq.ft) *</label>
-              <input
+              <input min="1" max="100000"
                 required
                 type="number"
                 step="10"
@@ -294,7 +360,7 @@ export default function SiteSurveys() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Roof Tilt (Degrees)</label>
-              <input
+              <input min="0" max="90"
                 type="number"
                 step="1"
                 value={formData.roof_tilt}
@@ -321,7 +387,7 @@ export default function SiteSurveys() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Cable Run to Inverter (m)</label>
-              <input
+              <input min="0" max="1000"
                 type="number"
                 step="1"
                 value={formData.cable_distance}
@@ -332,7 +398,7 @@ export default function SiteSurveys() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Recommended kW</label>
-              <input
+              <input min="1" max="5"
                 type="number"
                 step="0.5"
                 value={formData.recommended_capacity}
@@ -365,14 +431,13 @@ export default function SiteSurveys() {
               >
                 <option value="Draft">Draft (Unapproved - blocks quote)</option>
                 <option value="Submitted">Submitted for Review</option>
-                <option value="Approved">Approved (Ready for quote)</option>
               </select>
             </div>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Survey Notes & Remarks</label>
-            <textarea
+            <textarea maxLength={2000}
               rows={2}
               value={formData.survey_notes}
               onChange={(e) => setFormData({ ...formData, survey_notes: e.target.value })}

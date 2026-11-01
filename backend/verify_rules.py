@@ -84,7 +84,7 @@ def test_hard_gates():
         order_id=order.id,
         quotation_id=q.id,
         customer_id=customer.id,
-        amount=50000.0,
+        amount=round(order.total_amount * 0.30, 2),  # 30% advance including GST
         payment_type="advance",
         status="Recorded"
     )
@@ -159,10 +159,11 @@ def test_hard_gates():
     print(f"PASS: Active warranty ticket resolved to '{active_ticket.service_type}', customer_charge: Rs. {active_ticket.customer_charge}")
 
     # Expired ticket test (INV-2023-0018)
+    owner = db.query(EquipmentSerial).filter(EquipmentSerial.serial_number == "INV-2023-0018").first().order.customer
     expired_ticket = TicketService.create_ticket(
         db,
         ServiceTicketCreate(
-            customer_id=customer.id,
+            customer_id=owner.id,
             equipment_serial="INV-2023-0018",
             title="Out-of-warranty capacitor breakdown",
             description="Inverter blown fuse and failed capacitor."
@@ -182,6 +183,7 @@ def test_hard_gates():
     except HTTPException as e:
         print(f"PASS: Correctly rejected closure: {e.detail}")
 
+    TicketService.resolve_ticket(db, active_ticket.id)
     TicketService.customer_confirm_ticket(db, active_ticket.id)
     closed_ticket = TicketService.close_ticket(db, active_ticket.id)
     assert closed_ticket.status == "Closed"

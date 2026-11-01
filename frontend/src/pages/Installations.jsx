@@ -2,28 +2,35 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import DataTable from '../components/DataTable';
 import StatusBadge from '../components/StatusBadge';
-import Modal from '../components/Modal';
+import InstallationCompleteModal from '../components/InstallationCompleteModal';
+import InstallationProofModal from '../components/InstallationProofModal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
-import { Wrench, CheckCircle2, ShieldCheck, Calendar, User, Zap } from 'lucide-react';
+import { CheckCircle2, ShieldCheck, Calendar, User, Zap } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
 
 export default function Installations({ setActiveTab }) {
+  const { user } = useAuth();
+  const isTechnician = user?.role === 'technician'; // technicians complete their own jobs
+  const isSales = user?.role === 'sales';           // Sales decide which technician goes to which site
+  const [technicians, setTechnicians] = useState([]);
   const [installations, setInstallations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [completeModalInst, setCompleteModalInst] = useState(null);
-  const [instSerials, setInstSerials] = useState([]);
-  const [confirmedSize, setConfirmedSize] = useState(5.0);
-  const [completionNotes, setCompletionNotes] = useState('');
-  const [submittingComplete, setSubmittingComplete] = useState(false);
+  const [completeFor, setCompleteFor] = useState(null);
+  const [proofFor, setProofFor] = useState(null);
   const { addToast } = useToast();
 
   const fetchInstallations = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getInstallations();
+      const [data, crew] = await Promise.all([
+        api.getInstallations(),
+        isSales ? api.getTechnicians() : Promise.resolve([]),
+      ]);
       setInstallations(data);
+      setTechnicians(crew);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -31,49 +38,19 @@ export default function Installations({ setActiveTab }) {
     }
   };
 
+  const handleAssign = async (installation, technicianId) => {
+    try {
+      await api.assignTechnician(installation.id, technicianId);
+      addToast('Technician assigned. The job now appears on their list.', 'success');
+      fetchInstallations();
+    } catch (err) {
+      addToast(`Could not assign: ${err.message}`, 'error', 6000);
+    }
+  };
+
   useEffect(() => {
     fetchInstallations();
   }, []);
-
-  const handleOpenComplete = async (inst) => {
-    try {
-      setCompleteModalInst(inst);
-      setConfirmedSize(inst.system_capacity);
-      setCompletionNotes(`Completed rooftop installation and testing. Generation verified.`);
-      const serials = await api.getInstallationSerials(inst.id);
-      setInstSerials(serials);
-    } catch (err) {
-      addToast(`Error: ${err.message}`, 'error');
-    }
-  };
-
-  const handleMarkComplete = async (e) => {
-    e.preventDefault();
-    if (!completeModalInst) return;
-
-    try {
-      setSubmittingComplete(true);
-      const serialNumbers = instSerials.map((s) => s.serial_number);
-      await api.completeInstallation(completeModalInst.id, {
-        confirmed_system_size: parseFloat(confirmedSize),
-        serial_numbers: serialNumbers,
-        notes: completionNotes
-      });
-
-      addToast(
-        `Installation #${completeModalInst.id} Completed! System size ${confirmedSize}kW confirmed. Warranties automatically created!`,
-        'success',
-        6000
-      );
-      setCompleteModalInst(null);
-      fetchInstallations();
-      if (setActiveTab) setActiveTab('warranties');
-    } catch (err) {
-      addToast(`Completion Failed: ${err.message}`, 'error');
-    } finally {
-      setSubmittingComplete(false);
-    }
-  };
 
   const columns = [
     {
@@ -90,12 +67,23 @@ export default function Installations({ setActiveTab }) {
     {
       header: 'Assigned Crew',
       accessor: 'technician_name',
-      render: (row) => (
-        <div className="text-xs flex items-center gap-1.5 text-slate-700">
-          <User className="w-3.5 h-3.5 text-slate-400" />
-          <span className="font-medium">{row.technician_name}</span>
-        </div>
-      )
+      render: (row) =>
+        isSales && row.status !== 'Completed' ? (
+          <select
+            value={row.technician_id || ''}
+            onChange={(e) => handleAssign(row, Number(e.target.value))}
+            className="px-2 py-1 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-amber-500"
+          >
+            {technicians.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="text-xs flex items-center gap-1.5 text-slate-700">
+            <User className="w-3.5 h-3.5 text-slate-400" />
+            <span className="font-medium">{row.technician_name}</span>
+          </div>
+        )
     },
     {
       header: 'Scheduled Date',
@@ -133,19 +121,28 @@ export default function Installations({ setActiveTab }) {
       accessor: 'id',
       render: (row) => (
         <div>
-          {row.status !== 'Completed' ? (
+          {row.status !== 'Completed' && !isTechnician ? (
+            <span className="text-xs text-slate-500 font-medium">Technician completes</span>
+          ) : row.status !== 'Completed' ? (
             <button
-              onClick={() => handleOpenComplete(row)}
+              onClick={() => setCompleteFor(row)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs"
             >
-              <CheckCircle2 className="w-3.5 h-3.5" /> Mark Completed
+              <CheckCircle2 className="w-3.5 h-3.5" /> Finish the job
             </button>
           ) : (
-            <div className="text-xs">
-              <span className="font-medium text-emerald-600">✓ Warranties Active</span>
+            <div className="text-xs space-y-0.5">
+              <span className="font-medium text-emerald-600">✓ Completed</span>
               <div className="text-[10px] text-slate-400">
-                {row.finish_time ? new Date(row.finish_time).toLocaleDateString() : 'Done'}
+                {row.finish_time ? new Date(`${row.finish_time}Z`).toLocaleDateString('en-IN') : 'Done'}
+                {' · '}{row.photo_count} photo{row.photo_count === 1 ? '' : 's'}
               </div>
+              <button
+                onClick={() => setProofFor(row)}
+                className="text-[11px] font-semibold text-blue-600 hover:underline"
+              >
+                View proof
+              </button>
             </div>
           )}
         </div>
@@ -162,17 +159,16 @@ export default function Installations({ setActiveTab }) {
       <div className="bg-teal-50 border border-teal-200 rounded-xl p-3.5 text-xs text-teal-950 flex items-start gap-3">
         <ShieldCheck className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
         <div>
-          <strong>AUTOMATIC WARRANTY ENGINE TRIGGER:</strong> When an installation is marked completed, the backend
-          automatically computes and generates Warranty records for every serialized product (Inverter: 2yr, Battery:
-          2yr, Charge Controller: 2yr) plus 20-year bulk Solar Panel warranty. Start date = completion date; End date is
-          computed automatically.
+          <strong>PROOF OF WORK:</strong> A job is complete only when the technician has recorded the start and finish
+          times, taken photos of the finished roof, and the homeowner has signed on the screen to accept the work.
+          Warranties start when the goods are delivered, or at completion if delivery was not recorded.
         </div>
       </div>
 
       <div className="flex justify-between items-center">
         <div>
           <h3 className="text-lg font-bold text-slate-900">Rooftop Installation Jobs</h3>
-          <p className="text-xs text-slate-500">Track technician schedules and confirm system size to activate warranties.</p>
+          <p className="text-xs text-slate-500">Track technician schedules and keep the proof of every finished job.</p>
         </div>
       </div>
 
@@ -182,97 +178,12 @@ export default function Installations({ setActiveTab }) {
         searchPlaceholder="Search installations by customer or technician..."
       />
 
-      {/* Mark Completed Modal */}
-      <Modal
-        isOpen={!!completeModalInst}
-        onClose={() => setCompleteModalInst(null)}
-        title={completeModalInst ? `Confirm Completion: JOB-${completeModalInst.id.toString().padStart(4, '0')}` : 'Complete'}
-      >
-        {completeModalInst && (
-          <form onSubmit={handleMarkComplete} className="space-y-4 text-sm">
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Customer:</span>
-                <span className="font-bold text-slate-900">{completeModalInst.customer_name}</span>
-              </div>
-              <div className="flex justify-between mt-1">
-                <span className="text-slate-500">Assigned Crew:</span>
-                <span className="font-semibold text-slate-800">{completeModalInst.technician_name}</span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Confirmed System Capacity (kW) *
-              </label>
-              <input
-                required
-                type="number"
-                step="0.1"
-                min="0.5"
-                value={confirmedSize}
-                onChange={(e) => setConfirmedSize(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Verify actual nameplate kW capacity installed on the customer's roof.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Linked Serial Numbers for Installed Hardware:
-              </label>
-              <div className="space-y-1.5 max-h-36 overflow-y-auto border border-slate-200 rounded-lg p-2.5 bg-slate-50">
-                {instSerials.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">No serials dispatched yet for this order.</p>
-                ) : (
-                  instSerials.map((s) => (
-                    <div key={s.id} className="flex justify-between items-center text-xs p-1.5 bg-white rounded border border-slate-200">
-                      <div>
-                        <span className="font-bold text-slate-800">{s.product_name}</span>
-                        <span className="text-slate-400 text-[11px] ml-1.5">({s.category})</span>
-                      </div>
-                      <span className="font-mono font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                        {s.serial_number}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Installation Notes / Checklist</label>
-              <textarea
-                rows={2}
-                value={completionNotes}
-                onChange={(e) => setCompletionNotes(e.target.value)}
-                placeholder="Earthing testing ohms, AC voltage, inverter display sync..."
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => setCompleteModalInst(null)}
-                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={submittingComplete}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                {submittingComplete ? 'Saving & Creating Warranties...' : 'Mark Completed & Activate Warranties'}
-              </button>
-            </div>
-          </form>
-        )}
-      </Modal>
+      <InstallationCompleteModal
+        installation={completeFor}
+        onClose={() => setCompleteFor(null)}
+        onCompleted={fetchInstallations}
+      />
+      <InstallationProofModal installation={proofFor} onClose={() => setProofFor(null)} />
     </div>
   );
 }

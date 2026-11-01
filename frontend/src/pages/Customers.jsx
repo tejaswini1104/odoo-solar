@@ -5,13 +5,18 @@ import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
 import { Plus, Phone, Mail, MapPin, User } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import ScheduleSurveyModal from '../components/ScheduleSurveyModal';
 
 export default function Customers() {
+  const { user } = useAuth();
+  const isSales = user?.role === 'sales'; // only Sales add customers
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [scheduleFor, setScheduleFor] = useState(null);
   const { addToast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -109,7 +114,23 @@ export default function Customers() {
           {new Date(row.created_at).toLocaleDateString()}
         </span>
       )
-    }
+    },
+    ...(isSales
+      ? [
+          {
+            header: 'Action',
+            accessor: 'id',
+            render: (row) => (
+              <button
+                onClick={() => setScheduleFor(row)}
+                className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-300 hover:bg-slate-100 text-slate-700 transition"
+              >
+                Schedule survey
+              </button>
+            )
+          }
+        ]
+      : [])
   ];
 
   if (loading) return <LoadingState message="Loading customers..." />;
@@ -122,13 +143,17 @@ export default function Customers() {
           <h3 className="text-lg font-bold text-slate-900">Registered Customers</h3>
           <p className="text-xs text-slate-500">Accounts converted from leads or registered directly for solar projects.</p>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
-        >
-          <Plus className="w-4 h-4" /> Add Customer
-        </button>
+        {isSales && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-semibold shadow-xs transition"
+          >
+            <Plus className="w-4 h-4" /> Add Customer
+          </button>
+        )}
       </div>
+
+      <ScheduleSurveyModal customer={scheduleFor} onClose={() => setScheduleFor(null)} />
 
       <DataTable
         columns={columns}
@@ -145,7 +170,7 @@ export default function Customers() {
         <form onSubmit={handleCreate} className="space-y-4 text-sm">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name *</label>
-            <input
+            <input maxLength={255}
               required
               type="text"
               value={formData.name}
@@ -158,19 +183,21 @@ export default function Customers() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Phone *</label>
-              <input
+              <input maxLength={14}
                 required
                 type="text"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder="+91 98480 12345"
+                pattern="(\+91|91|0)?[ -]?[6-9][0-9]{9}"
+                title="Enter a 10 digit mobile number, for example 9876543210"
+                placeholder="98480 12345"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
               />
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Email *</label>
-              <input
+              <input maxLength={255}
                 required
                 type="email"
                 value={formData.email}
@@ -183,7 +210,7 @@ export default function Customers() {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">City *</label>
-            <input
+            <input maxLength={100}
               required
               type="text"
               value={formData.city}
@@ -195,7 +222,7 @@ export default function Customers() {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Address *</label>
-            <textarea
+            <textarea maxLength={500}
               required
               rows={2}
               value={formData.address}

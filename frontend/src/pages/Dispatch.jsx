@@ -1,13 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import DataTable from '../components/DataTable';
 import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
 import { LoadingState, ErrorState } from '../components/States';
 import { useToast } from '../components/Toast';
-import { Truck, Box, ShieldCheck, AlertCircle, CheckCircle2, QrCode } from 'lucide-react';
+import { Truck, CheckCircle2, QrCode, Camera, X, ClipboardList } from 'lucide-react';
+import CameraScanner from '../components/CameraScanner';
+import { cameraScanSupported } from '../utils/cameraSupport';
+import { useAuth } from '../auth/AuthContext';
 
 export default function Dispatch({ setActiveTab }) {
+  const { user } = useAuth();
+  const isWarehouse = user?.role === 'warehouse'; // only the warehouse assigns serials and dispatches
   const [orders, setOrders] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -16,6 +21,11 @@ export default function Dispatch({ setActiveTab }) {
   const [dispatchReqs, setDispatchReqs] = useState(null);
   const [assignedSerials, setAssignedSerials] = useState({});
   const [submittingDispatch, setSubmittingDispatch] = useState(false);
+  const [pickList, setPickList] = useState(null);
+  const [packed, setPacked] = useState({});
+  const [scanText, setScanText] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const scanBox = useRef(null);
   const { addToast } = useToast();
 
   const loadData = async () => {
@@ -42,17 +52,58 @@ export default function Dispatch({ setActiveTab }) {
   const handleOpenDispatch = async (order) => {
     try {
       setActiveDispatchOrder(order);
-      const reqData = await api.getDispatchRequirements(order.id);
+      setScanText('');
+      setCameraOpen(false);
+      setPacked({});
+      setAssignedSerials({}); // every serial number must be scanned, so nothing is filled in for the warehouse
+      const [reqData, pick] = await Promise.all([api.getDispatchRequirements(order.id), api.getPickList(order.id)]);
       setDispatchReqs(reqData);
-
-      // Pre-fill initial assigned serials if available
-      const initialAssigned = {};
-      reqData.requirements.forEach((req) => {
-        initialAssigned[req.product_id] = req.available_serials.slice(0, req.required_quantity);
-      });
-      setAssignedSerials(initialAssigned);
+      setPickList(pick);
     } catch (err) {
       addToast(`Failed to load requirements: ${err.message}`, 'error');
+    }
+  };
+
+  // One scan (handheld scanner, typed, or camera): put the serial in the right slot, or say why it cannot go there
+  const acceptScan = useCallback((raw) => {
+    const code = (raw || '').trim();
+    if (!code || !dispatchReqs) return;
+    const req = dispatchReqs.requirements.find((r) =>
+      r.available_serials.some((sn) => sn.toLowerCase() === code.toLowerCase())
+    );
+    if (!req) {
+      addToast(`"${code}" is not an in-stock serial number for the equipment on this order.`, 'error', 5000);
+      return;
+    }
+    const exact = req.available_serials.find((sn) => sn.toLowerCase() === code.toLowerCase());
+    const all = Object.values(assignedSerials).flat();
+    if (all.includes(exact)) {
+      addToast(`${exact} is already scanned.`, 'error', 4000);
+      return;
+    }
+    const current = assignedSerials[req.product_id] || [];
+    if (current.length >= req.required_quantity) {
+      addToast(`${req.product_name}: all ${req.required_quantity} unit(s) are already scanned.`, 'error', 4000);
+      return;
+    }
+    setAssignedSerials({ ...assignedSerials, [req.product_id]: [...current, exact] });
+    addToast(`${exact} scanned for ${req.product_name}.`, 'success', 1500);
+  }, [dispatchReqs, assignedSerials, addToast]);
+
+  const removeScanned = (productId, serial) =>
+    setAssignedSerials((prev) => ({ ...prev, [productId]: (prev[productId] || []).filter((sn) => sn !== serial) }));
+
+  const allScanned = !!dispatchReqs && dispatchReqs.requirements.every(
+    (r) => (assignedSerials[r.product_id] || []).length === r.required_quantity
+  );
+
+  const handleDelivered = async (order) => {
+    try {
+      await api.markDelivered(order.id);
+      addToast('Delivery recorded. The warranty clock has started for every serial number and the panels.', 'success', 7000);
+      loadData();
+    } catch (err) {
+      addToast(`Could not record delivery: ${err.message}`, 'error', 6000);
     }
   };
 
@@ -62,6 +113,10 @@ export default function Dispatch({ setActiveTab }) {
 
     // Flatten all assigned serial numbers
     const serialList = Object.values(assignedSerials).flat().filter(Boolean);
+    if (!allScanned) {
+      addToast('Scan every serial number before dispatch.', 'error');
+      return;
+    }
 
     try {
       setSubmittingDispatch(true);
@@ -115,16 +170,30 @@ export default function Dispatch({ setActiveTab }) {
       accessor: 'id',
       render: (row) => (
         <div>
-          {row.status === 'Confirmed' ? (
+          {row.status === 'Confirmed' && !isWarehouse ? (
+            <span className="text-xs text-slate-500 font-medium">Warehouse dispatches</span>
+          ) : row.status === 'Confirmed' ? (
             <button
               onClick={() => handleOpenDispatch(row)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition shadow-xs"
             >
               <Truck className="w-3.5 h-3.5" /> Assign Serials & Dispatch
             </button>
+          ) : row.status === 'Dispatched' && !row.delivered_at && isWarehouse ? (
+            <button
+              onClick={() => handleDelivered(row)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-xs"
+              title="Confirm the goods have reached the customer. This starts the warranty."
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" /> Mark delivered
+            </button>
+          ) : row.delivered_at ? (
+            <span className="text-xs text-emerald-600 font-medium">
+              ✓ Delivered {new Date(`${row.delivered_at}Z`).toLocaleDateString('en-IN')}
+            </span>
           ) : (
             <span className="text-xs text-slate-500 font-medium">
-              {row.status === 'Dispatched' || row.status === 'Completed' ? 'Dispatched' : 'Requires Confirmation'}
+              {row.status === 'Dispatched' ? 'Dispatched, awaiting delivery' : row.status === 'Completed' ? 'Dispatched' : 'Requires Confirmation'}
             </span>
           )}
         </div>
@@ -210,51 +279,96 @@ export default function Dispatch({ setActiveTab }) {
               <div className="text-slate-500 mt-0.5">Customer: {activeDispatchOrder.customer_name}</div>
             </div>
 
+            {pickList && (
+              <div className="rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  <ClipboardList className="w-3.5 h-3.5" /> Pick list: pack everything
+                </div>
+                <div className="px-3 py-1.5 text-[11px] text-slate-500 border-b border-slate-100">
+                  Deliver to {pickList.delivery_address}
+                </div>
+                <ul className="divide-y divide-slate-100 text-xs">
+                  {pickList.lines.map((line) => (
+                    <li key={line.product_id} className="flex items-center gap-3 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!packed[line.product_id]}
+                        onChange={(e) => setPacked({ ...packed, [line.product_id]: e.target.checked })}
+                        className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                        aria-label={`Packed ${line.product_name}`}
+                      />
+                      <div className="flex-1">
+                        <span className={`font-semibold ${packed[line.product_id] ? 'line-through text-slate-400' : 'text-slate-900'}`}>{line.product_name}</span>
+                        <span className="text-slate-500 ml-2">{line.category}</span>
+                        {line.is_serialized && <span className="ml-2 text-purple-700 font-bold">needs serial</span>}
+                      </div>
+                      <span className="font-mono font-bold text-slate-800">{line.quantity} {line.unit}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="space-y-3">
               <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Serialized Hardware Assignment (Mandatory):
+                Scan each serial number (mandatory):
               </h5>
 
-              {dispatchReqs.requirements.map((req) => (
-                <div key={req.product_id} className="p-3 bg-purple-50/60 rounded-lg border border-purple-200 text-xs">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold text-purple-900">{req.product_name}</span>
-                    <span className="px-2 py-0.5 rounded bg-purple-200 text-purple-900 font-semibold">
-                      Requires {req.required_quantity} Serial Number(s)
-                    </span>
-                  </div>
-
-                  {Array.from({ length: req.required_quantity }).map((_, idx) => (
-                    <div key={idx} className="mt-2">
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                        Unit #{idx + 1} Serial Number *
-                      </label>
-                      <div className="flex gap-2">
-                        <select
-                          required
-                          value={assignedSerials[req.product_id]?.[idx] || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAssignedSerials((prev) => {
-                              const curr = [...(prev[req.product_id] || [])];
-                              curr[idx] = val;
-                              return { ...prev, [req.product_id]: curr };
-                            });
-                          }}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-xs font-mono font-medium focus:ring-2 focus:ring-purple-500"
-                        >
-                          <option value="">-- Select In-Stock Serial Number --</option>
-                          {req.available_serials.map((s) => (
-                            <option key={s} value={s}>
-                              {s} (In Stock)
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ))}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <QrCode className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input maxLength={100}
+                    ref={scanBox}
+                    autoFocus
+                    value={scanText}
+                    onChange={(e) => setScanText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault(); // a handheld scanner types the code and presses Enter
+                        acceptScan(scanText);
+                        setScanText('');
+                      }
+                    }}
+                    placeholder="Scan or type a serial number, then press Enter"
+                    className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                  />
                 </div>
-              ))}
+                {cameraScanSupported() && (
+                  <button
+                    type="button"
+                    onClick={() => setCameraOpen(!cameraOpen)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    <Camera className="w-4 h-4" /> Camera
+                  </button>
+                )}
+              </div>
+              {cameraOpen && <CameraScanner onScan={acceptScan} onClose={() => setCameraOpen(false)} />}
+
+              {dispatchReqs.requirements.map((req) => {
+                const done = assignedSerials[req.product_id] || [];
+                return (
+                  <div key={req.product_id} className="p-3 bg-purple-50/60 rounded-lg border border-purple-200 text-xs">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold text-purple-900">{req.product_name}</span>
+                      <span className={`px-2 py-0.5 rounded font-semibold ${done.length === req.required_quantity ? 'bg-emerald-200 text-emerald-900' : 'bg-purple-200 text-purple-900'}`}>
+                        {done.length} of {req.required_quantity} scanned
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {done.map((sn) => (
+                        <span key={sn} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-purple-200 rounded font-mono font-semibold text-slate-800">
+                          {sn}
+                          <button type="button" onClick={() => removeScanned(req.product_id, sn)} aria-label={`Remove ${sn}`}>
+                            <X className="w-3 h-3 text-slate-400 hover:text-rose-600" />
+                          </button>
+                        </span>
+                      ))}
+                      {done.length === 0 && <span className="text-slate-500">Nothing scanned yet.</span>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
@@ -267,7 +381,7 @@ export default function Dispatch({ setActiveTab }) {
               </button>
               <button
                 type="submit"
-                disabled={submittingDispatch}
+                disabled={submittingDispatch || !allScanned}
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition disabled:opacity-50 flex items-center gap-2"
               >
                 <Truck className="w-4 h-4" />
